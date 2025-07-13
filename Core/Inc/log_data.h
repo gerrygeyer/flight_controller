@@ -18,6 +18,8 @@
 
 #define LOG_BUFFER_SIZE 512
 #define LOG_RING_SIZE 4096
+#define LOG_WRITE_THRESHOLD (LOG_RING_SIZE * 3 / 4)  // ab 75 % wird geschrieben
+#define LOG_SYNC_INTERVAL_MS 200                     // alle 200 ms f_sync()
 
 void Log_WriteBuffered(const char* data);
 void Log_ProcessBuffered(void);

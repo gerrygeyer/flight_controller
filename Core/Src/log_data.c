@@ -5,6 +5,17 @@
  *      Author: gerrygeyer
  */
 
+/**
+ * @file    log_data.c
+ * @brief   Log data to SD-Card
+ * @details DetailedDescription
+ *
+ * @author  gerrygeyer
+ * @date    Jul 13, 2025
+ * @version 1.0
+ *
+ * @copyright MIT License
+ */
 
 #include "log_data.h"
 #include <string.h>
@@ -14,11 +25,21 @@
 #include <sys_math.h>
 #include "fatfs.h"  // enthält SDFatFS & SDPath
 
+/**
+ * @brief		Dummy-function
+ *
+ * @details 	necessary, because the fatfs need a SD_Present pin but on the board this pin are not connented
+ *
+ * @param  		param [Beschreibung des Eingabeparameters 1]
+ */
 uint8_t BSP_SD_IsDetected(void)
 {
     return SD_PRESENT;
 }
 
+volatile uint32_t log_time_ticks;
+
+FATFS FatFs;
 volatile bool log_data_flag;
 
 static FIL file;
@@ -48,10 +69,25 @@ void Log_WriteBuffered(const char* data)
 
 void Log_ProcessBuffered(void)
 {
-    static uint32_t last_sync = 0;
+    static uint32_t tick_counter = 0;
 
-    if (ring_tail == ring_head)
+    if (file.obj.fs == NULL) {
+        // Dateiobjekt ist ungültig
+        const char* msg = "Invalid file handle\r\n";
+//        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
         return;
+    }
+
+    uint16_t fill = (ring_head >= ring_tail)
+                  ? (ring_head - ring_tail)
+                  : (LOG_RING_SIZE - ring_tail + ring_head);
+
+    if (fill < LOG_WRITE_THRESHOLD && tick_counter < 50) {
+        tick_counter++;
+        return;
+    }
+
+    tick_counter = 0;
 
     while (ring_tail != ring_head) {
         uint16_t chunk_len = (ring_head >= ring_tail)
@@ -64,17 +100,16 @@ void Log_ProcessBuffered(void)
         FRESULT res = f_write(&file, &ring_buffer[ring_tail], chunk_len, &written);
 
         if (res != FR_OK || written == 0) {
-            // Fehlerbehandlung möglich
-            break;
+            const char* msg = "f_write failed\r\n";
+//            HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+            f_close(&file);
+            return;
         }
 
         ring_tail = (ring_tail + written) % LOG_RING_SIZE;
     }
 
-    if (HAL_GetTick() - last_sync >= 50) {
-        f_sync(&file);
-        last_sync = HAL_GetTick();
-    }
+    f_sync(&file);
 }
 
 void Log_TickExample(void)
@@ -86,11 +121,19 @@ void Log_TickExample(void)
 
 bool Log_Init(void)
 {
+	log_time_ticks  =0;
+	if (BSP_SD_IsDetected() != SD_PRESENT){
+		HAL_Delay(1);
+		return false;
+	}
     log_data_flag = false;
 
-    FRESULT fres = f_mount(&SDFatFS, "", 1);
-    if (fres != FR_OK)
-        return false;
+    FRESULT fres = f_mount(&FatFs, "", 1);
+    if (fres != FR_OK){
+    	HAL_Delay(1);
+    	fres = f_mount(&FatFs, "", 1);
+    	if (fres != FR_OK) return false;
+    }
 
     char filename[32];
     if (!find_next_log_filename(filename, sizeof(filename)))
@@ -99,6 +142,8 @@ bool Log_Init(void)
     fres = f_open(&file, filename, FA_WRITE | FA_CREATE_ALWAYS);
     if (fres != FR_OK)
         return false;
+
+    f_write(&file, "index,mag_x,mag_y,mag_z\r\n", strlen(header), &written);
 
     return true;
 }
@@ -132,11 +177,22 @@ void set_log_data_flag(void)
 void log_data_if_ready(void)
 {
     if (log_data_flag) {
-        stopp_time_measurement();
-        start_time_measurement();
+
         log_data_flag = false;
 
         sensor_fusion *sf = get_data_ptr();
         Log_GyroCSV(&sf->mag_t);  // ggf. später durch gyro ersetzen
     }
+}
+
+
+/**
+ * @brief		increase timer value
+ *
+ * @details 	function are triggert by task-funcion
+ *
+ * @param  		log_time_ticks counter, that increased every 1 ms
+ */
+void time_counter_1kHz(void){
+	log_time_ticks++;
 }

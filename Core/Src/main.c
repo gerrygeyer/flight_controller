@@ -184,27 +184,23 @@ int main(void)
 //  HAL_NVIC_DisableIRQ(EXTI9_5_IRQn);
 //
 //HAL_Delay(500);
-  if (HAL_SD_Init(&hsd1) != HAL_OK) {
-      Error_Handler();
-  }
-  HAL_Delay(10);
-  while (HAL_SD_GetCardState(&hsd1) != HAL_SD_CARD_TRANSFER) {
-      HAL_Delay(1);
-  }
-  HAL_Delay(10);
+//  HAL_Delay(10);
+//  while (HAL_SD_GetCardState(&hsd1) != HAL_SD_CARD_TRANSFER) {
+//      HAL_Delay(1);
+//  }
+//  HAL_Delay(10);
 
   // TEST
-  uint8_t buffer[512];
-  HAL_StatusTypeDef status = HAL_SD_ReadBlocks(&hsd1, buffer, 0, 1, HAL_MAX_DELAY);
-  if (status != HAL_OK) {
-      // Hardwarezugriff schlägt fehl
-      while (1);  // Fehler
-  }
+//  uint8_t buffer[512];
+//  HAL_StatusTypeDef status = HAL_SD_ReadBlocks(&hsd1, buffer, 0, 1, HAL_MAX_DELAY);
+//  if (status != HAL_OK) {
+//      // Hardwarezugriff schlägt fehl
+//      while (1);  // Fehler
+//  }
   // TEST ENDE
   bool ok = Log_Init(); // hier ist die änderung
-  if(ok == true){
-
-  }
+  stopp_time_measurement();
+  start_time_measurement();
   // Danach EXTI wieder aktivieren
 //  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 //  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
@@ -878,7 +874,7 @@ static void MX_SDMMC1_SD_Init(void)
   hsd1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hsd1.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hsd1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd1.Init.ClockDiv = 0;
+  hsd1.Init.ClockDiv = 4;
   if (HAL_SD_Init(&hsd1) != HAL_OK)
   {
     Error_Handler();
