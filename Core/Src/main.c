@@ -199,8 +199,7 @@ int main(void)
 //  }
   // TEST ENDE
   bool ok = Log_Init(); // hier ist die änderung
-  stopp_time_measurement();
-  start_time_measurement();
+
   // Danach EXTI wieder aktivieren
 //  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 //  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);

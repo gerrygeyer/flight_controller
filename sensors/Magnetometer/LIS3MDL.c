@@ -12,7 +12,7 @@
 #include <sensor_fusion.h>
 #include <stdbool.h>
 
-#define DMA_NOT_USED 1
+//#define DMA_NOT_USED 1
 
 uint8_t mag_stuck_counter;
 
@@ -20,12 +20,34 @@ uint8_t I2C_buf[6];  // statt DMA
 int16_t global_mx, global_my, global_mz;
 xyz_16t debug_mag;
 
+/**
+ * @brief		function to write register in polling mode
+ *
+ * @details 	only used in init-process
+ */
 static void LIS3MDL_WriteReg(uint8_t reg, uint8_t value)
 {
     HAL_I2C_Mem_Write(&hi2c1, LIS3MDL_I2C_ADDR,
                       reg, I2C_MEMADD_SIZE_8BIT, &value, 1, HAL_MAX_DELAY);
 }
 
+
+/**
+ * @brief     Initializes the LIS3MDL magnetometer via I²C.
+ *
+ * @details   Performs the basic initialization of the LIS3MDL sensor. This includes setting the CS pin (PB3) high
+ *            to activate I²C mode, performing an optional I²C scan to detect connected devices, and configuring
+ *            key control registers of the sensor. It also resets the internal stuck counter and performs an initial
+ *            dummy read to unlock the DRDY (data ready) interrupt.
+ *
+ * @note      The CS pin (PB3) must be configured as a GPIO output before calling this function.
+ *            This function uses HAL_Delay() and is therefore not suitable for hard real-time contexts.
+ *
+ * @warning   Must be called before accessing the LIS3MDL sensor. Reinitializing while DRDY is already active
+ *            may lead to communication errors.
+ *
+ * @see       LIS3MDL_WriteReg(), LIS3MDL_ReadMagnetometer()
+ */
 void LIS3MDL_Init(void)
 {
 	mag_stuck_counter = 0;
@@ -63,14 +85,21 @@ void LIS3MDL_Init(void)
                      0x28 | 0x80, I2C_MEMADD_SIZE_8BIT, dummy, 6, HAL_MAX_DELAY);
 }
 
-//// Diese Funktion muss in main.c aktiv bleiben!
-//void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-//{
-//    if (GPIO_Pin == GPIO_PIN_5) // PB5 = INT/DRDY vom LIS3MDL
-//    {
-//        LIS3MDL_EXTI_Callback();  // Trigger I2C read via Interrupt
-//    }
-//}
+/**
+ * @brief     Handles EXTI interrupt triggered by the LIS3MDL DRDY signal.
+ *
+ * @details   This function is intended to be called when the LIS3MDL asserts its data-ready (DRDY) interrupt pin.
+ *            It checks whether the I²C peripheral is ready and, if so, initiates a non-blocking (interrupt-based)
+ *            read of the latest magnetometer data registers (6 bytes: X, Y, Z).
+ *
+ * @note      The function assumes that `I2C_buf` points to a valid 6-byte buffer.
+ *            This is a lightweight callback and should return quickly.
+ *
+ * @warning   The I²C bus (hi2c1) must not be busy when the interrupt occurs.
+ *            Make sure no other I²C operations are running concurrently.
+ *
+ * @see       HAL_I2C_Mem_Read_IT(), LIS3MDL_Init()
+ */
 
 void LIS3MDL_EXTI_Callback(void)
 {
@@ -82,6 +111,21 @@ void LIS3MDL_EXTI_Callback(void)
     }
 }
 
+/**
+ * @brief     Callback executed after I²C memory read is complete (non-blocking).
+ *
+ * @details   This function is automatically called by the HAL when a memory read operation using
+ *            `HAL_I2C_Mem_Read_IT()` completes. If the transfer was triggered by I2C1, the received magnetometer
+ *            data from the LIS3MDL is parsed and stored in global variables (`global_mx`, `global_my`, `global_mz`).
+ *            It also resets the `mag_stuck_counter` and signals to the sensor fusion algorithm that new data is ready.
+ *
+ * @param     hi2c Pointer to the I2C handle structure (typically &hi2c1).
+ *
+ * @note      The function assumes that 6 bytes of data have been received into `I2C_buf`
+ *            in little-endian format (LSB first) as output by the LIS3MDL.
+ *
+ * @see       HAL_I2C_Mem_Read_IT(), mag_ready()
+ */
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
     if (hi2c->Instance == I2C1)
@@ -92,11 +136,26 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
         global_mz = (int16_t)(I2C_buf[5] << 8 | I2C_buf[4]);
 
 
-
-        mag_ready();  // Hier kommt dein Sensorfusion-Aufruf rein
+        mag_ready();  // Signals that magnetometer data is ready for use (defined in sensor_fusion.c)
     }
 }
 
+
+/**
+ * @brief     Periodic service routine for LIS3MDL magnetometer health monitoring.
+ *
+ * @details   This function should be called regularly (e.g., every 1 ms) to monitor the I²C communication state
+ *            with the LIS3MDL magnetometer. It uses an internal frequency divider (`freq_counter`) to execute
+ *            the actual logic roughly every 13 ms. If the I²C bus is busy for more than one cycle, the function
+ *            assumes a stuck state and attempts to restart a non-blocking read of the magnetometer data.
+ *
+ * @note      This is a fallback mechanism in case the EXTI or DRDY-triggered read fails. It helps recover
+ *            from I²C communication hangs. The function relies on `HAL_I2C_GetState()` to detect bus readiness.
+ *
+ * @warning   Make sure this function is called from a context that allows I²C operations (e.g., not from inside an ISR).
+ *
+ * @see       HAL_I2C_Mem_Read_IT(), HAL_I2C_GetState(), LIS3MDL_EXTI_Callback()
+ */
 void LIS3MDL_Service(void)
 {
 	static uint8_t freq_counter = 0;
@@ -135,62 +194,83 @@ void LIS3MDL_Service(void)
 }
 
 
-void read_data_mag(sensor_fusion *pHandle){
-
-	pHandle->mag_t.x = global_mx;
-	pHandle->mag_t.y = global_my;
-	pHandle->mag_t.z = global_mz;
-
+void read_data_mag(sensor_fusion *pHandle)
+{
+    pHandle->mag_t.x = global_mx;
+    pHandle->mag_t.y = global_my;
+    pHandle->mag_t.z = global_mz;
 }
 
 
-/*
- * softiron_mat_q15 =
 
-   1.0e+04 *
-
-    3.0588    0.3674   -0.2487
-    0.3674    2.9479   -0.3683
-   -0.2487   -0.3683    3.2768
- *
- */
 
 /**
- * @brief softiron matrix
- * @note  calculatet offline in matlab
+ * @brief Soft-iron correction matrix
+ * @note  Calculated offline in MATLAB and scaled to Q15
  * @see   softiron_apply_q15()
  */
-
 const int32_t softiron_q15[3][3] = {
-    {  30588,   3674,  -2487 },
-    {   3674,  29479,  -3683 },
-    {  -2487,  -3683 ,  32768 }
+    {  24242,   6005,   1874 },
+    {   6005,  32768,  -4661 },
+    {   1874,  -4661,  28161 }
 };
 
 
+//const int32_t softiron_q15[3][3] = {
+//    {  30588,   3674,  -2487 },
+//    {   3674,  29479,  -3683 },
+//    {  -2487,  -3683 ,  32768 }
+//};
+
+
+//offset =
+//
+//   1.0e+03 *
+//
+//    0.2063   -0.7926   -8.4992;
+
+
+// Hard-iron offset vector (scaled to Q15-compatible range)
+const int16_t hardiron_q15[3] = { 2963, -2119, -5369};
+//const int32_t hardiron_q15[3] = {
+//		206, -792, -8499
+//};
+
+//2.963923737494823e+03	-2.119397637366230e+03	-5.369925197794294e+03
+
+
 /**
- * @brief     Applies the normalized soft-iron correction matrix to magnetometer data.
+ * @brief     Applies hard- and soft-iron correction to magnetometer data.
  *
- * @details   Expects Q15-compatible input values. The matrix is scaled such that its largest
- *            element equals 32768 (i.e., 1.0 in Q15). The computation is performed in Q30 and
- *            shifted appropriately (>>2 and >>13) to bring the result back into Q15 range.
+ * @details   Expects Q15-compatible input values. The hard-iron offset is subtracted per axis.
+ *            Then, the normalized soft-iron matrix is applied. The matrix is scaled such that
+ *            the largest element equals 32768 (i.e., 1.0 in Q15). The computation is performed
+ *            in Q30 and scaled back to Q15 by >>2 and >>13.
  *
- * @param     mag_raw   Pointer to the input vector (x/y/z), scaled to Q15.
- * @param     mag_out   Pointer to the output vector (x/y/z), corrected in Q15.
+ * @param     mag_raw   Pointer to input vector (x/y/z), scaled to Q15
+ * @param     mag_out   Pointer to output vector (x/y/z), corrected in Q15
  *
- * @note      Input values should already be offset-compensated before applying this function.
+ * @note      No preprocessing required – hard-iron compensation is done inside this function.
  */
-void softiron_apply_q15(const xyz_16t *mag_raw, xyz_16t *mag_out){
+void softiron_apply_q15(const int16_t *mag_raw, int16_t *mag_out){
 
     for (int i = 0; i < 3; i++) {
         int32_t acc = 0;
         for (int j = 0; j < 3; j++) {
-            acc += (((int32_t)softiron_q15[i][j] * mag_raw[j]) >> 2);
+//            acc += (((int32_t)softiron_q15[i][j] * (mag_raw[j] - hardiron_q15[j])) >> 2);
+            acc += (((int32_t)softiron_q15[i][j] * (mag_raw[j])) >> 2);
         }
         acc = (acc >> 13);
         mag_out[i] = CLAMP_INT32_TO_INT16(acc);
     }
 
+}
+
+
+void hardiron_apply_q15(int16_t *mag_raw){
+	mag_raw[0] = mag_raw[0] - hardiron_q15[0];
+	mag_raw[1] = mag_raw[1] - hardiron_q15[1];
+	mag_raw[2] = mag_raw[2] - hardiron_q15[2];
 }
 
 

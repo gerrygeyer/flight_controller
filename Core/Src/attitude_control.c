@@ -98,3 +98,11 @@ void generate_u_vector(control_output_f in, float u_out[4][1]){
 	u_out[3][0] = in.u4;
 
 }
+
+
+void attitude_control_quaternion_lqr_q15(void){
+
+
+
+
+}

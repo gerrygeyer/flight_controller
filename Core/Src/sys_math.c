@@ -159,12 +159,22 @@ void inverse_matrix_4x4_f(float in_matrix[4][4], float out_matrix[4][4]) {
 }
 
 
-/*
- * Sine Lookup Table [0, pi/2]
- * Number of Points :		1024
- * Maximum Amplitude Value:	32767
+/**
+ * @brief       Sine lookup table for the interval [0, π/2] in Q15 format.
  *
+ * @details     This table contains 1024 precomputed values of the sine function
+ *              between 0 and π/2, scaled to Q15 format (0 … 32767).
+ *              It is used to accelerate sine evaluations by avoiding runtime trigonometric computations,
+ *              especially on embedded systems without floating-point support.
+ *
+ * @note
+ * 				- Resolution: 1024 steps over [0, π/2] → step size ≈ 0.001534 rad
+ * 				- Range: \f$ \text{sin}(x) \cdot 32767 \f$ for \f$ x \in [0, \frac{\pi}{2}] \f$
+ * 				- Symmetry can be used to compute values over [0, 2π] using mirror rules.
+ *
+ * @see         Q15 fixed-point format, cosine symmetry: \f$ \cos(x) = \sin(x + \frac{\pi}{2}) \f$
  */
+extern const int16_t sineLookupTable[1024];
 const int16_t sineLookupTable[] = {
 		0,50,101,151,201,252,302,352,402,453,503,553,604,654,704,755,805,855,906,956,1006,
 		1056,1107,1157,1207,1258,1308,1358,1408,1459,1509,1559,1609,1660,1710,1760,1810,1861,
@@ -239,6 +249,7 @@ const int16_t sineLookupTable[] = {
 		32766,32767,32767,32767,32767
 };
 
+
 int16_t sin_i(int16_t y){
 	int16_t Output;
 
@@ -257,9 +268,7 @@ int16_t sin_i(int16_t y){
 		}else{
 			Output = sineLookupTable[x_i];
 		}
-
 	}
-
 	return Output;
 }
 
@@ -268,6 +277,7 @@ int16_t cos_i(int16_t y){
 }
 
 /*
+ * kein beispiel bitte
  *% Anzahl der LUT-Einträge
 N = 256;
 
@@ -295,6 +305,21 @@ end
 fprintf('\n};\n');
  */
 
+/**
+ * @brief       Lookup table for arcsine function (asin) in Q15 format.
+ *
+ * @details     Precomputed values of \f$ \arcsin(x) \f$ for \f$ x \in [0, 1] \f$ in 256 steps,
+ *              scaled to Q15 format (−32768 ≙ −π, +32767 ≙ +π).
+ *              The table allows fast fixed-point evaluation of asin without using floating-point math.
+ *
+ * @note
+ * 			- Input domain: \f$ x \in [0, 32767] \f$ (Q15 positive half)
+ * 			- Output: \f$ \text{asin}(x) \cdot \frac{32767}{\pi} \f$ in Q15
+ * 			- For negative inputs, use symmetry: \f$ \arcsin(-x) = -\arcsin(x) \f$
+ * 			- Interpolation (optional) improves precision between steps
+ *
+ * @see         q15_asin(), Q15 fixed-point format
+ */
 const int16_t asin_q15_lut[256] = {
      0,     82,    164,    245,    327,    409,    491,    573,
    655,    736,    818,    900,    982,   1064,   1146,   1228,
@@ -357,6 +382,27 @@ int16_t q15_asin(int16_t x) {
     return sign ? -interp : interp;
 }
 
+
+
+int16_t q15_acos(int16_t x){
+
+    return PI_OVER_2_Q15 - q15_asin(x);
+}
+
+/**
+ * @brief       Lookup table for arctangent approximation (atan2-style) in Q15 format.
+ *
+ * @details     This table contains 256 precomputed values of the arctangent function
+ *              for the ratio \f$ y/x \in [0, 1] \f$, mapped to Q15 format representing radians.
+ *              Used for fast fixed-point implementation of `atan2(y, x)` via symmetry and scaling.
+ *
+ * @note
+ * 				- Input domain: \f$ \frac{y}{x} \in [0, 1] \f$
+ * 				- Output: \f$ \arctan\left(\frac{y}{x}\right) \cdot \frac{32767}{\pi} \f$ in Q15
+ * 				- Covers only the first octant (0°…45°) → full circle can be reconstructed using quadrant logic
+ * 				- Resolution: 256 steps → step size ≈ 1/256
+ * @see         q15_atan2(), Q15 fixed-point format, trig symmetry
+ */
 const int16_t atan2_q15_lut[256] = {
       0,     41,     82,    123,    164,    204,    245,    286,
     327,    368,    409,    450,    490,    531,    572,    613,
@@ -474,7 +520,7 @@ void multiply_Matrix3x3(int32_t mat1[3][3],int32_t mat2[3][3], int32_t result[3]
  */
 
 
-// function to start, stop the time the motor control need
+// function to start, stop the time the control need
 
 void start_time_measurement(void){
 	TIM2->CNT = 0;
@@ -494,31 +540,7 @@ uint32_t stopp_time_measurement(void){
 	return (Output);
 
 }
-//// Bitpositionstabelle (Index = Position höchstes 1-Bit)
-//static const uint16_t sqrt_guess[32] = {
-//    0, 1, 1, 2, 2, 3, 4, 6,
-//    8, 11, 16, 22, 32, 45, 64, 90,
-//    128, 181, 256, 362, 512, 724, 1024, 1448,
-//    2048, 2896, 4096, 5792, 8192, 11585, 16384, 23170
-//};
-//
-//uint32_t sqrt_fast_uint(uint32_t n) {
-//    if (n == 0) return 0;
-//
-//    // 1. finde höchste gesetzte Bitposition
-//    uint8_t shift = 31 - __builtin_clz(n);  // GCC/ARMCC/Clang built-in
-//
-//    // 2. erste Schätzung aus Tabelle
-//    uint32_t x = sqrt_guess[shift];
-//
-//    // 3. Newton-Raphson (1 Schritt reicht für ~2% Fehler)
-//    x = (x + n / x) >> 1;
-//
-//    // 4. final clip (bei Überkorrektur)
-//    if (x * x > n) x--;
-//
-//    return x;
-//}
+
 
 uint32_t sqrt_fast_uint(uint32_t n) {
     if (n == 0) return 0;
@@ -535,6 +557,20 @@ uint32_t sqrt_fast_uint(uint32_t n) {
     return x;
 }
 
+/**
+ * @brief       Multiplies two Q15 fixed-point numbers with rounding.
+ *
+ * @details     Performs a 16-bit × 16-bit multiplication with intermediate 32-bit precision,
+ *              adds 0.5 (1 << 14) for rounding, and shifts the result back to Q15 format.
+ *
+ * @param       a       First Q15 operand.
+ * @param       b       Second Q15 operand.
+ *
+ * @return      Rounded Q15 result of the multiplication.
+ *
+ * @note        This function is `static inline` for performance and can be used in tight control loops.
+ *              Result is clamped implicitly by casting to int16_t.
+ */
 static inline int16_t q15_mul(int16_t a, int16_t b) {
     return (int16_t)(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
 }
@@ -544,9 +580,17 @@ void norm_3d_vector(int16_t *input, int16_t *norm_out){
 	int32_t y = input[1];
 	int32_t z = input[2];
 
+
 	uint32_t mag = (uint32_t)(x*x) + (uint32_t)(y*y) + (uint32_t)(z*z);
 
 	mag = sqrt_fast_uint(mag);
+
+	if(mag == 0){
+		norm_out[0] = 0;
+		norm_out[1] = 0;
+		norm_out[2] = 0;
+		return;
+	}
 
     // 2. Skalenfaktor vorbereiten in Q15: scale = 32767 / |v|
     // Wir rechnen: scale = (32767 << 15) / mag
@@ -562,6 +606,21 @@ void norm_3d_vector(int16_t *input, int16_t *norm_out){
 
 // ########### QUATERNION MATH ############
 
+/**
+ * @brief       Multiplies two Q15 values and right-shifts the result by 1.
+ *
+ * @details     Performs a 16-bit × 16-bit multiplication with 32-bit intermediate result.
+ *              The result is not scaled back to Q15 (i.e., no >>15 shift), but only shifted
+ *              by 1 bit, typically used for special cases like symmetric expressions
+ *              or energy/power terms.
+ *
+ * @param       a       First operand in Q15 format (int16_t).
+ * @param       b       Second operand in Q15 format (int16_t).
+ *
+ * @return      31-bit result (int32_t), effectively: \f$ \frac{a \cdot b}{2} \f$
+ *
+ * @note        No rounding is applied. Use when half-scale product is intended.
+ */
 #define Q15_MUL_HALF(a, b) (((int32_t)(a) * (int32_t)(b)) >> 1)
 
 void NormalizeQuaternionQ15(const int16_t *q, int16_t *q_out) {
@@ -618,7 +677,7 @@ void NormalizeQuaternionQ15(const int16_t *q, int16_t *q_out) {
 
 // its the same, but here the default setting are [0;0;0;0]
 void Normalize4DvectorQ15(int16_t *in, int16_t *out){
-	uint32_t minimal_mag_value = 128; // if the mag smaller than that, we say its noise
+	uint32_t minimal_mag_value = 4; // if the mag smaller than that, we say its noise
     int32_t qw = in[0];
     int32_t qx = in[1];
     int32_t qy = in[2];
@@ -756,6 +815,11 @@ void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]) {
 
 //\#########################################################
 
+
+void ln_q15_unit_quaternions(const int16_t * q_in, int16_t ln_out){
+
+
+}
 
 
 

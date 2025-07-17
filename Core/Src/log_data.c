@@ -1,10 +1,3 @@
-/*
- * log_data.c
- *
- *  Created on: Jul 11, 2025
- *      Author: gerrygeyer
- */
-
 /**
  * @file    log_data.c
  * @brief   Log data to SD-Card
@@ -24,35 +17,37 @@
 #include <sensor_fusion.h>
 #include <sys_math.h>
 #include "fatfs.h"  // enthält SDFatFS & SDPath
+#include <settings.h>
 
 /**
- * @brief		Dummy-function
- *
- * @details 	necessary, because the fatfs need a SD_Present pin but on the board this pin are not connented
- *
- * @param  		param [Beschreibung des Eingabeparameters 1]
+ * @brief     Dummy function for SD card detection.
+ * @details   Required by FatFS, but the SD card detect pin is not connected on this board.
+ * @retval    SD_PRESENT Always returns present.
  */
 uint8_t BSP_SD_IsDetected(void)
 {
     return SD_PRESENT;
 }
 
-volatile uint32_t log_time_ticks;
 
 FATFS FatFs;
 volatile bool log_data_flag;
 
 static FIL file;
-static UINT bytesWritten;
 
-static uint8_t logBuffer[LOG_BUFFER_SIZE];
-static uint16_t logIndex = 0;
-static bool logReady = false;
+
+//static UINT bytesWritten;
+
+//static uint8_t logBuffer[LOG_BUFFER_SIZE];
+//static uint16_t logIndex = 0;
+//static bool logReady = false;
 
 static char ring_buffer[LOG_RING_SIZE];
 static volatile uint16_t ring_head = 0;
 static volatile uint16_t ring_tail = 0;
 static uint32_t sample_counter = 0;
+
+
 
 static bool find_next_log_filename(char* filename, size_t len);
 
@@ -73,7 +68,7 @@ void Log_ProcessBuffered(void)
 
     if (file.obj.fs == NULL) {
         // Dateiobjekt ist ungültig
-        const char* msg = "Invalid file handle\r\n";
+//        const char* msg = "Invalid file handle\r\n";
 //        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
         return;
     }
@@ -100,7 +95,7 @@ void Log_ProcessBuffered(void)
         FRESULT res = f_write(&file, &ring_buffer[ring_tail], chunk_len, &written);
 
         if (res != FR_OK || written == 0) {
-            const char* msg = "f_write failed\r\n";
+//            const char* msg = "f_write failed\r\n";
 //            HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
             f_close(&file);
             return;
@@ -112,20 +107,20 @@ void Log_ProcessBuffered(void)
     f_sync(&file);
 }
 
-void Log_TickExample(void)
-{
-    char msg[64];
-    snprintf(msg, sizeof(msg), "Tick: %lu\r\n", HAL_GetTick());
-    Log_WriteBuffered(msg);
-}
+//void Log_TickExample(void)
+//{
+//    char msg[64];
+//    snprintf(msg, sizeof(msg), "Tick: %lu\r\n", HAL_GetTick());
+//    Log_WriteBuffered(msg);
+//}
 
 bool Log_Init(void)
 {
-	log_time_ticks  =0;
 	if (BSP_SD_IsDetected() != SD_PRESENT){
 		HAL_Delay(1);
 		return false;
 	}
+
     log_data_flag = false;
 
     FRESULT fres = f_mount(&FatFs, "", 1);
@@ -143,7 +138,7 @@ bool Log_Init(void)
     if (fres != FR_OK)
         return false;
 
-    f_write(&file, "index,mag_x,mag_y,mag_z\r\n", strlen(header), &written);
+//    f_write(&file, "index,mag_x,mag_y,mag_z\r\n", strlen(header), &written);
 
     return true;
 }
@@ -176,7 +171,7 @@ void set_log_data_flag(void)
 
 void log_data_if_ready(void)
 {
-    if (log_data_flag) {
+    if (log_data_flag && LOG_DATA) {
 
         log_data_flag = false;
 
@@ -186,13 +181,3 @@ void log_data_if_ready(void)
 }
 
 
-/**
- * @brief		increase timer value
- *
- * @details 	function are triggert by task-funcion
- *
- * @param  		log_time_ticks counter, that increased every 1 ms
- */
-void time_counter_1kHz(void){
-	log_time_ticks++;
-}
