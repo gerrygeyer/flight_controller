@@ -46,6 +46,11 @@ typedef struct{
 	int16_t z;
 }int16_xyz;
 
+typedef struct{
+	xyz_32t acc;
+	xyz_32t gyro;
+}OFFSET_ACC_GYRO;
+
 typedef enum {
     MPU6000_IDLE,
     MPU6000_WRITE_REG,

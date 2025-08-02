@@ -21,6 +21,8 @@
 #define GYRO_GRAD_TO_RAD_Q15		9370 // 2^15/2000 * pi/180 * 2^15
 #define GYRO_GRAD_TO_RAD_DELTA_T_Q15	(DEGREE_TO_RAD * 2000.0f / (float)SENSOR_FUSION_FREQUENCY_IMU) * (float)Q15
 
+#define GRAD2RAD_GYRO 	34.906585f
+
 /*
  * normierter_wert = deg_per_sec / 2000
 → also: (rad_per_sec * 180 / π) / 2000
@@ -39,11 +41,6 @@ void task_imu_sensor_fusion(void);
 void mag_ready(void);
 
 sensor_fusion* get_data_ptr(void);
-
-//void error_function_small(int16_t *accel, int16_t *q, int16_t *f_error);
-//void get_jacobi_small(int16_t J[3][4], int16_t *q);
-//void compute_gradient(int16_t grad[4], int16_t J[3][4], int16_t f_error[3]);
-//
 
 
 

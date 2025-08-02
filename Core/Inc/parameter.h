@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define ATTITUDE_FREQUENCY	500 // Hz
+
 #define OK			0
 #define NOT_OK		1
 
@@ -129,6 +131,12 @@ typedef struct{
 }xyz_16t;
 
 typedef struct{
+	int32_t x;
+	int32_t y;
+	int32_t z;
+}xyz_32t;
+
+typedef struct{
 	int16_t w;
 	int16_t x;
 	int16_t y;
@@ -145,6 +153,8 @@ typedef struct{
 	int16_t pitch;
 	int16_t roll;
 	int16_t yaw;
+
+	wxyz_16t quaternion;
 
 }sensor_fusion;
 

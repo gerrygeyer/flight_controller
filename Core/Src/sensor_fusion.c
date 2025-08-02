@@ -38,7 +38,7 @@ int16_t gyro_grad2rad_delta_t_q15;
 // Flags
 volatile bool mag_ready_flag;
 // Output (debug)
-float beta_yaw = 0.1;
+float beta_yaw = 0.005;
 int16_t euler_debug[3];
 float euler_debug_pitch,euler_debug_roll,euler_debug_yaw;
 xyz_16t debug_gyro, debug_omega, debug_mag_norm, debug_mag_hard_iron;
@@ -73,16 +73,18 @@ void init_sensors(void)
 	mag_ready_flag = false;
 
 //	dt_q15 = ((1UL <<15) * 35)/80;
-	dt_q15 = ((1UL <<15) * 35)/SENSOR_FUSION_FREQUENCY_IMU;
+	float x = ((float)((float)Q15 * GRAD2RAD_GYRO)/(float)SENSOR_FUSION_FREQUENCY_IMU);
+	dt_q15 = CLAMP_INT32_TO_INT16((int32_t)x);
 
 //	dt_q15 = (1UL <<15)/80;
-	beta_f = 0.05;
-
+	beta_f = 0.005;
+	beta_yaw = 0.005;
 
 	q_madgwick_out[0] = Q15_ONE;
 	q_madgwick_out[1] = 0;
 	q_madgwick_out[2] = 0;
 	q_madgwick_out[3] = 0;
+
 
 	if(COMMUNICATION_IMU_MAG){
 		LIS3MDL_Init();
@@ -100,7 +102,7 @@ void task_imu_sensor_fusion(void){
 	}else{
 		MPU6000_Get_data_IT(&sf_values);
 			// debug calc for beta
-			beta_t = (int16_t)((float)INT16_MAX * beta_f);
+			beta_t = (int16_t)((float)INT16_MAX * beta_f * GRAD2RAD_GYRO);
 
 
 			switch(mag_ready_flag){
@@ -114,10 +116,7 @@ void task_imu_sensor_fusion(void){
 				mag_ready_flag = false;
 			break;
 			default:
-
-
 				Madgwick_filter_acc_gyro(beta_t, &sf_values);
-
 			break;
 			}
 
@@ -224,7 +223,7 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 	 * qDot = qDot - beta * grad;
 	 */
 
-	int16_t beta_yaw_t = (int16_t)((float)INT16_MAX * beta_yaw);
+	int16_t beta_yaw_t = CLAMP_INT32_TO_INT16((int32_t)((float)INT16_MAX * beta_yaw * GRAD2RAD_GYRO));
 	qDot[0] = debug_qDot.w = CLAMP_INT32_TO_INT16((int32_t)qDot[0] - (int32_t)q15_mul(grad_norm[0], beta));
 	qDot[1] = debug_qDot.x = CLAMP_INT32_TO_INT16((int32_t)qDot[1] - (int32_t)q15_mul(grad_norm[1], beta));
 	qDot[2] = debug_qDot.y = CLAMP_INT32_TO_INT16((int32_t)qDot[2] - (int32_t)q15_mul(grad_norm[2], beta));
@@ -247,6 +246,11 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 	euler_debug_roll = (float)euler_debug[0];// * 360.0f / (float)INT16_MAX;
 	euler_debug_pitch = (float)euler_debug[1];// * 360.0f / (float)INT16_MAX;
 	euler_debug_yaw = (float)euler_debug[2];// * 360.0f / (float)INT16_MAX;
+
+	pHandle_sf->quaternion.w = q_madgwick_out[0];
+	pHandle_sf->quaternion.x = q_madgwick_out[1];
+	pHandle_sf->quaternion.y = q_madgwick_out[2];
+	pHandle_sf->quaternion.z = q_madgwick_out[3];
 
 }
 
@@ -593,6 +597,10 @@ static void get_bx_bz_q15(const int16_t *h, int16_t *bxz){
 	bxz[0] = sqrt_fast_uint(x);
 	bxz[1] = h[3];
 }
+
+
+
+
 
 // ######## END STATIC FUNCTIONS ############
 

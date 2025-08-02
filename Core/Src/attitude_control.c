@@ -13,6 +13,8 @@
 #include <settings.h>
 #include <task.h>
 
+#include <string.h>
+
 float inv_A[4][4];
 at_angl_f debug_angle;
 void init_attitude_control(void){
@@ -100,9 +102,116 @@ void generate_u_vector(control_output_f in, float u_out[4][1]){
 }
 
 
-void attitude_control_quaternion_lqr_q15(void){
 
 
 
 
+
+
+/**
+ * @brief       Computes the discrete time derivative of a Q15 vector (e.g., quaternion or sensor signal).
+ *
+ * @details     Approximates the derivative using finite differences:
+ *              \f$ \dot{x} = (x_{\text{new}} - x_{\text{old}}) \cdot f_s \f$,
+ *              where `f_s` is the sampling frequency.
+ *              The input and output vectors are assumed to be in Q15 format.
+ *
+ * @param[in]   val         Current value vector (int16_t[4]).
+ * @param[in]   val_old     Previous value vector (int16_t[4]).
+ * @param[in]   frequency   Sampling frequency in Hz (Q0 format).
+ * @param[out]  diff_out    Output differential (int16_t[4], Q15).
+ *
+ * @note
+ * - This function uses integer arithmetic; overflow is clamped to int16_t range.
+ * - Suitable for fixed-point implementations such as sensor fusion or quaternion rates.
+ *
+ * @see         CLAMP_INT32_TO_INT16
+ */
+static void differential_q15(const int16_t *val, const int16_t *val_old,const int16_t frequency, int16_t *diff_out){
+	int32_t x;
+	x = ((int32_t)val[0] - val_old[0]) * frequency;
+	diff_out[0] = CLAMP_INT32_TO_INT16(x);
+	x = ((int32_t)val[1] - val_old[1]) * frequency;
+	diff_out[1] = CLAMP_INT32_TO_INT16(x);
+	x = ((int32_t)val[2] - val_old[2]) * frequency;
+	diff_out[2] = CLAMP_INT32_TO_INT16(x);
+	x = ((int32_t)val[3] - val_old[3]) * frequency;
+	diff_out[3] = CLAMP_INT32_TO_INT16(x);
 }
+
+void attitude_control_quaternion_lqr_q15(int16_t *q){
+
+int16_t q_inv[4], q_err[4], q_err_inv[4], ln_q[3], w_err[4], diff_err[4], x_err[6], u_lqr[3];
+static int16_t q_err_last_value[4];
+
+memcpy(q_inv, q, sizeof(q));
+// generate linearized quaternion error: theta_
+q_t_conj_function(q_inv);
+multiplicateQuaternionQ15(q_inv, q, q_err);
+ln_q15_unit_quaternions_multiplicate_2(q_err, ln_q);
+
+// calculate angular velocity error: w_err
+memcpy(q_err_inv, q_err, sizeof(q_err));
+differential_q15(q_err, q_err_last_value, ATTITUDE_FREQUENCY, diff_err);
+multiplicateQuaternionQ15(q_err_inv,diff_err,w_err);
+
+x_err[0] = ln_q[0];
+x_err[1] = ln_q[1];
+x_err[2] = ln_q[2];
+x_err[3] = w_err[1];
+x_err[4] = w_err[2];
+x_err[5] = w_err[3];
+
+lqr_q15(x_err,u_lqr);
+
+
+memcpy(q_err_last_value, q_err, sizeof(q_err));
+}
+
+
+
+const int16_t K_q10[3][6] = {
+    {25679,     0,     0, 16537,     0,     0},
+    {    0, 25679,     0,     0, 16537,     0},
+    {    0,     0, 25679,     0,     0, 16537}
+};
+
+//const int16_t J = [0.012273 0         0;
+//0         0.012526 0;
+//0         0         0.020953];
+
+
+void lqr_q15(const int16_t *x_error,int16_t *u_out){
+	int32_t x, sum;
+
+	for (int i = 0; i < 3; i++) {
+		sum = 0;
+
+		x = (int32_t)K_q10[i][0] * x_error[0];
+		sum += (x >> 2); // Q28
+
+		x = (int32_t)K_q10[i][1] * x_error[1];
+		sum += (x >> 2); // Q28
+
+		x = (int32_t)K_q10[i][2] * x_error[2];
+		sum += (x >> 2); // Q28
+
+		x = (int32_t)K_q10[i][3] * x_error[3];
+		sum += (x >> 2); // Q28
+
+		x = (int32_t)K_q10[i][4] * x_error[4];
+		sum += (x >> 2); // Q28
+
+		x = (int32_t)K_q10[i][5] * x_error[5];
+		sum += (x >> 2); // Q28
+
+		sum = ((sum + (1 << 14)) >> 13); // back to Q15
+		u_out[i] = CLAMP_INT32_TO_INT16(sum);
+	}
+}
+
+
+
+//void feedback_linearisation(const int16_t *x_err, const int16_t rpm, ){
+//
+//}

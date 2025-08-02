@@ -575,6 +575,25 @@ static inline int16_t q15_mul(int16_t a, int16_t b) {
     return (int16_t)(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
 }
 
+/**
+ * @brief       Multiplies two Q15 values and doubles the result, with clamping.
+ *
+ * @details     Computes \f$ 2 \cdot (a \cdot b) \f$ where both inputs are in Q15 fixed-point format.
+ *              The intermediate result is in Q30, scaled back to Q15 with rounding and clamped to int16_t range.
+ *
+ * @param       a   First Q15 operand (int16_t).
+ * @param       b   Second Q15 operand (int16_t).
+ *
+ * @return      Result of \f$ 2 \cdot a \cdot b \f$ in Q15 format, clamped to \f$ [-32768, 32767] \f$.
+ *
+ * @note        Rounding is applied before shifting: adds \f$ 2^{13} \f$ before right-shift by 14.
+ */
+static inline int16_t q15_mul_2(int16_t a, int16_t b) {
+	int32_t x = (((int32_t)a * b + (1 << 13)) >> 14);
+    return CLAMP_INT32_TO_INT16(x);
+}
+
+
 void norm_3d_vector(int16_t *input, int16_t *norm_out){
 	int32_t x = input[0];
 	int32_t y = input[1];
@@ -816,9 +835,24 @@ void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]) {
 //\#########################################################
 
 
-void ln_q15_unit_quaternions(const int16_t * q_in, int16_t ln_out){
+void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out){
 
+	int16_t v[3], theta;
 
+	v[0] 	= q_in[1];
+	v[1] 	= q_in[2];
+	v[2] 	= q_in[3];
+	norm_3d_vector(v, v);
+	if(v[0] == 0 && v[1] == 0 && v[2] == 0){
+		ln_out[0] = 0;
+		ln_out[1] = 0;
+		ln_out[2] = 0;
+		return;
+	}
+	theta = q15_acos(q_in[0]);
+	ln_out[0] = q15_mul_2(v[0],theta);
+	ln_out[1] = q15_mul_2(v[1],theta);
+	ln_out[2] = q15_mul_2(v[2],theta);
 }
 
 

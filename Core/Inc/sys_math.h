@@ -183,8 +183,8 @@ at_angl_f degree_to_rad(at_angl_f input);
 
 
 /**
- * @defgroup SensorFusionQ15 Sensor Fusion Functions (Q15)
- * @brief Quaternion math and vector normalization for fixed-point sensor fusion (Q15).
+ * @defgroup QuaternionMathQ15 Quaternion Math Functions (Q15)
+ * @brief Fixed-point quaternion operations and vector normalization in Q15 format.
  * @{
  */
 
@@ -363,6 +363,28 @@ void multiplicateQuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_
  */
 void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]);
 
-/** @} */  // end of SensorFusionQ15 group
+
+/**
+ * @brief       Computes the logarithm of a unit quaternion in Q15 format.
+ *
+ * @details     Given a unit quaternion \f$ q = [w, x, y, z] \f$, the logarithmic map is:
+ *              \f$ \ln(q) = \theta \cdot \hat{v} \f$,
+ *              where \f$ \theta = \arccos(w) \f$ and \f$ \hat{v} = [x, y, z] / \|[x, y, z]\| \f$.
+ *              This maps the quaternion to a 3D vector in the tangent space.
+ *
+ *              All operations are performed in fixed-point Q15 format.
+ *
+ * @param[in]   q_in        Input unit quaternion [w, x, y, z] in Q15 format (int16_t[4]).
+ * @param[out]  ln_out      Output logarithm vector [x, y, z] in Q15 format (int16_t[3]).
+ *
+ * @note
+ * - The input quaternion must be normalized (i.e., unit length).
+ * - If the vector part is zero, the result is [0, 0, 0].
+ * - Internally uses `norm_3d_vector()`, `q15_acos()` and `q15_mul_2()`.
+ *
+ * @see         norm_3d_vector(), q15_acos(), q15_mul_2()
+ */
+void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out);
+/** @} */  // end of QuaternionMathQ15 group
 
 #endif /* INC_SYS_MATH_H_ */
