@@ -9,11 +9,6 @@
 #define INC_TASK_H_
 #include <parameter.h>
 
-void task_init(void);
-void time_management(void);
-at_control_f create_attitude_control_signals(void);
-void system_stop_function(void);
-
 #define SYSTEM_STOP		0
 #define SYSTEM_START 	1
 
@@ -33,5 +28,35 @@ void system_stop_function(void);
 #define TIME_12				11
 #define TIME_13				12
 #define TIME_14				13
+
+/**
+ * @brief		Trigger init functions one time.
+ *
+ * @details 	Is called once in the int main. All init functions
+ * 				of other code sections should be called here once
+ * 				at the beginning
+ */
+void task_init(void);
+
+/**
+ * @brief		Time management.
+ *
+ * @details 	is called by the timer interrupt of TIM1 periodically
+ * 				with a fixed frequency. Serves as the main call for the
+ * 				entire system.
+ */
+void time_management(void);
+
+/**
+ * @brief		"Stop system" function
+ *
+ * @details 	This function can be called from other code sections to
+ * 				put the system in STOP mode
+ */
+void system_stop_function(void);
+at_control_f create_attitude_control_signals(void);
+
+
+
 
 #endif /* INC_TASK_H_ */

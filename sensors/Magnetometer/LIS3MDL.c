@@ -17,7 +17,8 @@
 uint8_t mag_stuck_counter;
 
 uint8_t I2C_buf[6];  // statt DMA
-int16_t global_mx, global_my, global_mz;
+int16_t global_mx, global_my, global_mz, global_mx_buffer,global_my_buffer, global_mz_buffer;
+volatile bool lis3mdl_write_data;
 xyz_16t debug_mag;
 
 /**
@@ -52,6 +53,10 @@ void LIS3MDL_Init(void)
 {
 	mag_stuck_counter = 0;
 
+	lis3mdl_write_data = false;
+	global_mx_buffer = 0;
+	global_my_buffer = 0;
+	global_mz_buffer = 0;
     // Set PB3 (CS Pin) auf High um I2C zu aktivieren
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);
     HAL_Delay(10);
@@ -131,9 +136,16 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
     if (hi2c->Instance == I2C1)
     {
     	mag_stuck_counter = 0;
+    	lis3mdl_write_data = true;
         global_mx = (int16_t)(I2C_buf[1] << 8 | I2C_buf[0]);
         global_my = (int16_t)(I2C_buf[3] << 8 | I2C_buf[2]);
         global_mz = (int16_t)(I2C_buf[5] << 8 | I2C_buf[4]);
+        lis3mdl_write_data = false;
+
+
+    	global_mx_buffer = global_mx;
+    	global_my_buffer = global_my;
+    	global_mz_buffer = global_mz;
 
 
         mag_ready();  // Signals that magnetometer data is ready for use (defined in sensor_fusion.c)
@@ -196,9 +208,16 @@ void LIS3MDL_Service(void)
 
 void read_data_mag(sensor_fusion *pHandle)
 {
-    pHandle->mag_t.x = global_mx;
-    pHandle->mag_t.y = global_my;
-    pHandle->mag_t.z = global_mz;
+	if (!lis3mdl_write_data){
+		pHandle->mag_t.x = global_mx;
+		pHandle->mag_t.y = global_my;
+		pHandle->mag_t.z = global_mz;
+	}else{
+		pHandle->mag_t.x = global_mx_buffer;
+		pHandle->mag_t.y = global_my_buffer;
+		pHandle->mag_t.z = global_mz_buffer;
+	}
+
 }
 
 
@@ -210,11 +229,10 @@ void read_data_mag(sensor_fusion *pHandle)
  * @see   softiron_apply_q15()
  */
 const int32_t softiron_q15[3][3] = {
-    {  24242,   6005,   1874 },
-    {   6005,  32768,  -4661 },
-    {   1874,  -4661,  28161 }
+    {  32768,   4378,   1525 },
+    {   4378,  29344,    623 },
+    {   1525,    623,  28004 }
 };
-
 
 //const int32_t softiron_q15[3][3] = {
 //    {  30588,   3674,  -2487 },
@@ -231,7 +249,7 @@ const int32_t softiron_q15[3][3] = {
 
 
 // Hard-iron offset vector (scaled to Q15-compatible range)
-const int16_t hardiron_q15[3] = { 2963, -2119, -5369};
+const int16_t hardiron_q15[3] = { -573, -2171, -4990};
 //const int32_t hardiron_q15[3] = {
 //		206, -792, -8499
 //};

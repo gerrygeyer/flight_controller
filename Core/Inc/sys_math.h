@@ -12,6 +12,7 @@
 #include <math.h>
 
 #define CLAMP_INT32_TO_INT16(x) ((x) > INT16_MAX ? INT16_MAX : ((x) < INT16_MIN ? INT16_MIN : (int16_t)(x)))
+#define CLAMP(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
 
 #define INT16_HALF_VALUE	0x3FFF
 #define INT16_MAX_VALUE		0x7FFF
@@ -26,10 +27,46 @@
 
 
 #define PI_OVER_2_Q15		16384
+#define RPM_TO_RAD_Q15		3432
 
-#define Q15 				32768
+#define Q1					2
+#define Q4					16
+#define Q10					1024
+#define Q11					2048
+#define Q12					4096
+#define Q13					8192
+#define Q14					16384
+#define Q15					32768
+#define Q16					65536
+#define Q18					262144
+#define Q19					524288
+#define Q20					1048576
+#define Q22					4194304
+#define Q29					536870912
+#define Q30					1073741824
 
 
+
+
+/**
+ * @brief       Converts motor speed from RPM to angular velocity in rad/s (Q15 scaled).
+ *
+ * @details     Computes the angular velocity from a given motor speed in revolutions per minute (RPM)
+ *              using a fixed-point Q15 conversion factor.
+ *              The result is normalized by the maximum motor speed (`MAX_SPEED_MOTOR_RAD`).
+ *
+ * @param[in]   rpm     Motor speed in revolutions per minute (int16_t).
+ *
+ * @return      Angular velocity in rad/s, represented in Q15 fixed-point format.
+ *
+ * @note
+ * - `RPM_TO_RAD_Q15` must represent the factor \f$ \frac{2\pi}{60} \f$ in Q15 format.
+ * - `MAX_SPEED_MOTOR_RAD` must represent the maximum speed in rad/s.
+ * - Result is clamped to the valid int16_t range via `CLAMP_INT32_TO_INT16()`.
+ *
+ * @see         CLAMP_INT32_TO_INT16()
+ */
+int16_t rpm2rad_sQ15_scaled(int16_t rpm);
 
 /**
  * @defgroup TimeMeas Time Measurement Functions
@@ -179,8 +216,27 @@ at_angl_f degree_to_rad(at_angl_f input);
 
 
 
-
-
+/**
+ * @brief       Normalizes a 2D vector in Q15 fixed-point format.
+ *
+ * @details     This function normalizes the 2D vector @p v to unit length
+ *              (magnitude = 1.0 in Q15). The vector is represented in Q15
+ *              fixed-point format, where 32767 corresponds to 1.0.
+ *
+ *              The normalization is skipped if:
+ *              - The magnitude is less than 5 (vector too small → set to zero).
+ *              - The magnitude is exactly 1 (already normalized).
+ *
+ *
+ * @param[in,out] v   Pointer to a 2-element vector (Q15 format) to be normalized.
+ *
+ * @note        Uses 32-bit intermediate calculations to prevent overflow.
+ *              Magnitude calculation uses `sqrt_fast_uint()` for speed.
+ * @warning     If the magnitude is very small, the output will be set to zero.
+ *
+ * @see         sqrt_fast_uint(), CLAMP_INT32_TO_INT16()
+ */
+void norm_2d_vector_q15(int16_t *v);
 
 /**
  * @defgroup QuaternionMathQ15 Quaternion Math Functions (Q15)
@@ -386,5 +442,7 @@ void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]);
  */
 void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out);
 /** @} */  // end of QuaternionMathQ15 group
+
+
 
 #endif /* INC_SYS_MATH_H_ */

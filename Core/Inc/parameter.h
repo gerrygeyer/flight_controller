@@ -29,11 +29,13 @@
 #define SYSTEM_FREQUENCY	100 // Hz
 #define SYSTEM_TS			(float)(1.0f/(float)SYSTEM_FREQUENCY)
 
-#define MAX_SPEED_MOTOR_RPM 7000
+#define MAX_SPEED_MOTOR_RPM 5000
+#define MAX_SPEED_MOTOR_RAD 524
 
-#define DRONE_PARAM_K		0.0000077f
+#define DRONE_PARAM_K		0.000021f
 #define DRONE_PARAM_L		0.16f
-#define DRONE_PARAM_B		0.000000144f
+#define DRONE_PARAM_B		0.0000001898f
+
 
 
 #define DRONE_PARAM_K_E6	7.7f
@@ -45,6 +47,7 @@
 #define MOTOR_STOPP 0x00
 #define MOTOR_START 0xAA
 #define MOTOR_INIT	0xDD
+
 
 // LQR Control
 #define W_TRIM_RPM	4000
@@ -144,17 +147,25 @@ typedef struct{
 }wxyz_16t;
 
 
+
+/**
+ * @brief sensor fusion data
+ * @note  is created only once and passed through
+ * 			via the “sensor_fusion* get_data_ptr(void)”
+ * 			function
+ * @see   get_data_ptr();
+ */
 typedef struct{
 
-	xyz_16t acc_t;
-	xyz_16t mag_t;
-	xyz_16t gyro_t;
+	xyz_16t acc_t; 	/**< acc_xyz in Q15 representation */
+	xyz_16t mag_t;	/**< mag_xyz in Q15 representation */
+	xyz_16t gyro_t;	/**< gyro_xyz in Q15 representation */
 
-	int16_t pitch;
-	int16_t roll;
-	int16_t yaw;
+	int16_t pitch;	/**< pitch in Q15 representation (for better visualisaton/debug) */
+	int16_t roll;	/**< pitch in Q15 representation (for better visualisaton/debug) */
+	int16_t yaw;	/**< pitch in Q15 representation (for better visualisaton/debug) */
 
-	wxyz_16t quaternion;
+	wxyz_16t quaternion;	/** Sensor fusion output q */
 
 }sensor_fusion;
 
@@ -166,5 +177,25 @@ typedef struct{
 	bool NMI;
 	bool SVC;
 }error_flag;
+
+typedef struct{
+	 int16_t Jxx;
+	 int16_t Jyy;
+	 int16_t Jzz;
+}system_parameter;
+
+/**
+ * @brief StructDescription
+ * @note  Optionaler Hinweis zur Verwendung
+ * @see   ReferenzOderModulname
+ */
+typedef struct
+{
+	int16_t Iq; /**< FieldDesc1 */
+	int16_t speed_rpm; /**< FieldDesc2 */
+	uint16_t battery_voltage; /**< FieldDesc3 */
+	uint8_t system_state; /**< FieldDesc3 */
+	uint8_t service;
+} recive_motor;
 
 #endif /* INC_PARAMETER_H_ */

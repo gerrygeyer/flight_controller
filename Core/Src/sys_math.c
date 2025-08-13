@@ -159,6 +159,20 @@ void inverse_matrix_4x4_f(float in_matrix[4][4], float out_matrix[4][4]) {
 }
 
 
+// #############
+
+
+
+
+
+int16_t rpm2rad_sQ15_scaled(int16_t rpm){
+	int32_t Output;
+	Output = (rpm * RPM_TO_RAD_Q15)/MAX_SPEED_MOTOR_RAD; // note: can also pre-calculate RPM_TO_RAD_Q15/MAX_SPEED_MOTOR_RAD
+
+	return CLAMP_INT32_TO_INT16(Output);
+}
+
+
 /**
  * @brief       Sine lookup table for the interval [0, π/2] in Q15 format.
  *
@@ -593,6 +607,25 @@ static inline int16_t q15_mul_2(int16_t a, int16_t b) {
     return CLAMP_INT32_TO_INT16(x);
 }
 
+void norm_2d_vector_q15(int16_t *v){
+	int32_t x = v[0];
+	int32_t y = v[1];
+
+	uint32_t mag = (uint32_t)(x*x) + (uint32_t)(y*y);
+	if (mag < 5){		// its too small
+		v[0] = 0;
+		v[1] = 0;
+		return;
+	}
+	if (mag == 1) return; // be happy, we done
+
+	mag = sqrt_fast_uint(mag);
+
+	uint32_t scale_q15 = (32767UL << 15) / mag;
+	// 3. norm[i] = (accel[i] * scale_q15) >> 15
+	v[0] = CLAMP_INT32_TO_INT16((((int32_t)x * scale_q15) >> 15));
+	v[1] = CLAMP_INT32_TO_INT16((((int32_t)y * scale_q15) >> 15));
+}
 
 void norm_3d_vector(int16_t *input, int16_t *norm_out){
 	int32_t x = input[0];
@@ -854,6 +887,5 @@ void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out
 	ln_out[1] = q15_mul_2(v[1],theta);
 	ln_out[2] = q15_mul_2(v[2],theta);
 }
-
 
 

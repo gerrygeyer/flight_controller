@@ -65,6 +65,7 @@ DMA_HandleTypeDef hdma_uart7_rx;
 DMA_HandleTypeDef hdma_uart8_rx;
 DMA_HandleTypeDef hdma_uart8_tx;
 DMA_HandleTypeDef hdma_usart1_tx;
+DMA_HandleTypeDef hdma_usart1_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 DMA_HandleTypeDef hdma_usart3_tx;
 DMA_HandleTypeDef hdma_usart6_tx;
@@ -206,7 +207,7 @@ int main(void)
 //  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
 
 
-	  HAL_UART_Init(&huart1);
+//	  HAL_UART_Init(&huart1);
 	if (HAL_I2C_Init(&hi2c1) != HAL_OK){
 		Error_Handler();
 	}
@@ -222,6 +223,9 @@ int main(void)
 		Error_Handler();
 	}
 
+	if (HAL_UART_Init(&huart1) != HAL_OK){
+		Error_Handler();
+	}
 
 
 //  uint16_t status = 0xAA;
@@ -1047,6 +1051,9 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+  /* DMA2_Stream7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
 
 }
 

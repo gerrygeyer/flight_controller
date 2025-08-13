@@ -175,7 +175,7 @@ void log_data_if_ready(void)
 
         log_data_flag = false;
 
-        sensor_fusion *sf = get_data_ptr();
+        sensor_fusion *sf = read_sensorfusion_data();
         Log_GyroCSV(&sf->mag_t);  // ggf. später durch gyro ersetzen
     }
 }

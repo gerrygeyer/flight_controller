@@ -176,13 +176,13 @@ void MPU6000_ReadAccelGyro_start_IT(void){
 }
 
 void MPU6000_Get_data_IT(sensor_fusion * pHandler_sf){
-	accel.x  = pHandler_sf->acc_t.x = (int16_t)(imu_data[0] << 8 | imu_data[1]);
-	accel.y  = pHandler_sf->acc_t.y = (int16_t)(imu_data[2] << 8 | imu_data[3]);
-	accel.z  = pHandler_sf->acc_t.z = (int16_t)(imu_data[4] << 8 | imu_data[5]);
+	accel.x  = pHandler_sf->acc_t.x = (int16_t)(imu_data[0] << 8 | imu_data[1]) - imu_offset.acc.x;
+	accel.y  = pHandler_sf->acc_t.y = (int16_t)(imu_data[2] << 8 | imu_data[3]) - imu_offset.acc.y;
+	accel.z  = pHandler_sf->acc_t.z = (int16_t)(imu_data[4] << 8 | imu_data[5]) - imu_offset.acc.z;
 
-	gyro.x  = pHandler_sf->gyro_t.x = (int16_t)(imu_data[8] << 8 | imu_data[9]);
-	gyro.y	= pHandler_sf->gyro_t.y = (int16_t)(imu_data[10] << 8 | imu_data[11]);
-	gyro.z	= pHandler_sf->gyro_t.z = (int16_t)(imu_data[12] << 8 | imu_data[13]);
+	gyro.x  = pHandler_sf->gyro_t.x = (int16_t)(imu_data[8] << 8 | imu_data[9]) - imu_offset.gyro.x;
+	gyro.y	= pHandler_sf->gyro_t.y = (int16_t)(imu_data[10] << 8 | imu_data[11]) - imu_offset.gyro.y;
+	gyro.z	= pHandler_sf->gyro_t.z = (int16_t)(imu_data[12] << 8 | imu_data[13]) - imu_offset.gyro.z;
 }
 
 
@@ -260,7 +260,7 @@ static uint8_t calculate_offset_values(OFFSET_ACC_GYRO *pHandle){
 		pHandle->acc.x /= 100;
 		pHandle->acc.y /= 100;
 		pHandle->acc.z /= 100;
-		pHandle->acc.z = 2048 - pHandle->acc.z;
+		pHandle->acc.z = pHandle->acc.z - 2048;
 		pHandle->gyro.x /= 100;
 		pHandle->gyro.y /= 100;
 		pHandle->gyro.z /= 100;
@@ -314,4 +314,6 @@ static OFFSET_ACC_GYRO MPU6000_ReadAccelGyro_offset(void){
 
     return (Output);
 }
+
+
 

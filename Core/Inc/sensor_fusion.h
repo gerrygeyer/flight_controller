@@ -17,7 +17,8 @@
 //#include <tof400c_vl53l1x.h>
 //#include "../../sensors/imu/mpu6050.h"
 
-#define SENSOR_FUSION_FREQUENCY_IMU 1000 // Hz
+#define SENSOR_FUSION_FREQUENCY_IMU 1000 	// Hz
+#define SENSOR_FUSION_FREQUENCY_MAG	80		// Hz
 #define GYRO_GRAD_TO_RAD_Q15		9370 // 2^15/2000 * pi/180 * 2^15
 #define GYRO_GRAD_TO_RAD_DELTA_T_Q15	(DEGREE_TO_RAD * 2000.0f / (float)SENSOR_FUSION_FREQUENCY_IMU) * (float)Q15
 
@@ -40,9 +41,16 @@ bool BNO085_TestConnection(uint8_t *rx_buf, uint16_t buf_len);
 void task_imu_sensor_fusion(void);
 void mag_ready(void);
 
-sensor_fusion* get_data_ptr(void);
 
+wxyz_16t get_quaternion_Q15(void);
 
+/**
+ * @brief Returns a direct pointer to the live sensor fusion data.
+ * @warning This pointer may point to data currently being written!
+ *          Use only if you can guarantee no concurrent access.
+ * @return Pointer to the active sensor_fusion struct.
+ */
+sensor_fusion* read_sensorfusion_data(void);
 
 // ######## TEST ##########
 

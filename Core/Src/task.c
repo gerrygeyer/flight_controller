@@ -23,7 +23,13 @@ at_control_f attitude_control_signals;
 // used for Test function
 uint32_t control_signals_counter;
 uint8_t control_flag;
-uint8_t hearthbeat_system;
+
+
+wxyz_16t system_q;
+
+// debug
+int16_t debug_tau_1, debug_tau_2, debug_tau_3;
+
 
 void task_init(void){
 
@@ -36,7 +42,7 @@ void task_init(void){
 	init_attitude_control();
 	init_control_functions();
 	init_sensors();
-	//init_motor();
+	init_motor();
 	attitude_control_signals.T = 0;
 	attitude_control_signals.pitch = 0;
 	attitude_control_signals.roll = 0;
@@ -45,19 +51,41 @@ void task_init(void){
 	control_signals_counter = 0;
 	control_flag = OFF;
 
-	hearthbeat_system = 0;
+
+}
+/**
+ * @brief		Service functions
+ *
+ * @details 	Triggers control functions. Protects the system: in the event of a brief
+ * 				malfunction or if an interrupt is not triggered. After a predefined time
+ * 				without a reaction, periferie is retriggered,
+ */
+void service_functions(void){
+	MPU6000_Service();
+	LIS3MDL_Service();
+	service_recive_motor_information();
 }
 
 void time_management(void){
-
-
 	set_log_data_flag();
+	service_functions();
+	highspeed_task();
+}
 
-	MPU6000_Service();
-	LIS3MDL_Service();
+/**
+ * @brief		Highspeed Task
+ *
+ * @details 	All high-frequency tasks are carried out here, such as attitude control
+ * 				and communication with the motors.
+ */
+void highspeed_task(void){
+	int16_t tau[3], tau_f[3], q[4],q_att_ref[4];
 
-
-	hearthbeat_system ++;
+	system_q = get_quaternion_Q15();
+	q[0] = system_q.w;
+	q[1] = system_q.x;
+	q[2] = system_q.y;
+	q[3] = system_q.z;
 
 	switch(system_state){
 	case SYSTEM_STOP:
@@ -82,11 +110,9 @@ void time_management(void){
 	break;
 	case SYSTEM_START:
 		read_distance_sensor();
-//		read_distance_lidar1();
-//		read_distance_information();
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 1);
-		// ask the imu for orientation
 		read_orientation();
+
+
 		switch (control_flag){
 		case ON:
 			attitude_control_signals = create_attitude_control_signals();
@@ -97,7 +123,20 @@ void time_management(void){
 		}
 		control_signals_counter += 1;
 
-		run_attitude_control(&motor, &attitude_control_signals);
+		q_att_ref[0] = (int16_t)( 0.9818f * Q15);
+		q_att_ref[1] = (int16_t)( 0.0641 * Q15);
+		q_att_ref[2] = (int16_t)( -0.1436 * Q15);
+		q_att_ref[3] = (int16_t)( 0.1060 * Q15);
+
+
+		attitude_control_quaternion_lqr_q15(q,q_att_ref,tau);
+
+		debug_tau_1 = tau[0]; // debug
+		debug_tau_2 = tau[1];	// debug
+		debug_tau_3 = tau[2]; // devug
+
+
+		transform_u2_motorSpeed(tau, &motor);
 
 		motor.state_m_1 = MOTOR_START;
 		motor.state_m_2 = MOTOR_START;
@@ -108,7 +147,6 @@ void time_management(void){
 		if(run_motors(&motor) != OK){
 			// error
 		}
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // Toggle Pin for Time measurement
 	break;
 	default: // equal to SYSTEM_STOP (redundant)
 		motor.m_1 = 0;
