@@ -16,6 +16,7 @@
 #include <settings.h>
 #include <sensor_fusion.h>
 #include <Distance/distance_sensor.h>
+#include <log_data.h>
 
 uint8_t system_state;
 motor_t motor;
@@ -27,14 +28,18 @@ uint8_t control_flag;
 
 wxyz_16t system_q;
 
+motor_signals_16t motor_seed_esc;
+
 // debug
 int16_t debug_tau_1, debug_tau_2, debug_tau_3;
+uint8_t debug_speed_counter = 0;
 
+static void highspeed_task(void);
 
 void task_init(void){
 
-//	system_state = SYSTEM_START;
-	system_state = SYSTEM_STOP;
+	system_state = SYSTEM_START;
+//	system_state = SYSTEM_STOP;
 
 	run_test_vectors();
 
@@ -50,6 +55,11 @@ void task_init(void){
 
 	control_signals_counter = 0;
 	control_flag = OFF;
+
+	// test
+	int16_t q[4] = { 17106, 13889, -20718, 12608};
+	int16_t q_ref[4] = {3407, -28792, 14806, 3734};
+	int16_t tau[3];
 
 
 }
@@ -78,17 +88,26 @@ void time_management(void){
  * @details 	All high-frequency tasks are carried out here, such as attitude control
  * 				and communication with the motors.
  */
-void highspeed_task(void){
-	int16_t tau[3], tau_f[3], q[4],q_att_ref[4];
+static void highspeed_task(void){
+	int16_t q[4], w[3],q_att_ref[4];
+	int16_t tau[3], u[4];
+	float u_f[4][1], w_f[4][1];
 
-	system_q = get_quaternion_Q15();
-	q[0] = system_q.w;
-	q[1] = system_q.x;
-	q[2] = system_q.y;
-	q[3] = system_q.z;
+
+	get_quaternion_Q15(q, w);
+
+	motor_seed_esc = get_motorspeed_from_ESC();
+
+
 
 	switch(system_state){
 	case SYSTEM_STOP:
+
+//		debug_speed_counter++;
+//		motor.m_1 = debug_speed_counter;
+//		motor.m_2 = debug_speed_counter;
+//		motor.m_3 = debug_speed_counter;
+//		motor.m_4 = debug_speed_counter;
 
 		motor.m_1 = 0;
 		motor.m_2 = 0;
@@ -123,20 +142,31 @@ void highspeed_task(void){
 		}
 		control_signals_counter += 1;
 
-		q_att_ref[0] = (int16_t)( 0.9818f * Q15);
-		q_att_ref[1] = (int16_t)( 0.0641 * Q15);
-		q_att_ref[2] = (int16_t)( -0.1436 * Q15);
-		q_att_ref[3] = (int16_t)( 0.1060 * Q15);
+//		q_att_ref[0] = (int16_t)( 0.9818f * Q15);
+//		q_att_ref[1] = (int16_t)( 0.0641 * Q15);
+//		q_att_ref[2] = (int16_t)( -0.1436 * Q15);
+//		q_att_ref[3] = (int16_t)( 0.1060 * Q15);
+
+		q_att_ref[0] = (int16_t)( 1.0f * Q15);
+				q_att_ref[1] = (int16_t)( 0.0f * Q15);
+				q_att_ref[2] = (int16_t)( 0.0f * Q15);
+				q_att_ref[3] = (int16_t)( 0.0f * Q15);
 
 
-		attitude_control_quaternion_lqr_q15(q,q_att_ref,tau);
+		attitude_control_quaternion_lqr_q15(q,q_att_ref,w,tau);
 
 		debug_tau_1 = tau[0]; // debug
 		debug_tau_2 = tau[1];	// debug
 		debug_tau_3 = tau[2]; // devug
 
+		u[0] = 0;
+		u[1] = tau[0];
+		u[2] = tau[1];
+		u[3] = tau[2];
 
-		transform_u2_motorSpeed(tau, &motor);
+
+		transform_u2_motorSpeed(u,&motor);
+
 
 		motor.state_m_1 = MOTOR_START;
 		motor.state_m_2 = MOTOR_START;

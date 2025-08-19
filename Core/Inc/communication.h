@@ -20,12 +20,22 @@ uint8_t send_speed_status_M2(int16_t speed, uint8_t status);
 uint8_t send_speed_status_M3(int16_t speed, uint8_t status);
 uint8_t send_speed_status_M4(int16_t speed, uint8_t status);
 
-void Recive_motor_status1(void);
+void Recive_motor_status(uint8_t motor);
 void service_recive_motor_information(void);
+
+//motor_signals_16t get_motorspeed_from_ESC(void);
+motor_signals_16t get_motorspeed_from_ESC(void);
+uint16_t get_battery_voltage_from_ESC(void);
 
 // debug fnctions
 uint8_t scan_i2c_addresses(I2C_HandleTypeDef *hi2c);
 
+
+#define LENGTH_RX_DATA	10
+#define ASCI_S 				0x53
+#define ASCI_T 				0x54
+#define ASCI_A 				0x41
+#define ASCI_R 				0x52
 
 /**
  * @brief Service counter for all 4 Motors

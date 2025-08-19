@@ -16,12 +16,23 @@ void generate_u_vector(control_output_f in, float u_out[4][1]);
 void generate_RPM_commands(float w[4][1], motor_t *pHandle_motor);
 
 
-void attitude_control_quaternion_lqr_q15(const int16_t *q,const int16_t *q_ref, int16_t *tau);
+void attitude_control_quaternion_lqr_q15(const int16_t *q,const int16_t *q_ref, const int16_t *w_gyro_t, int16_t *tau);
 void transform_u2_motorSpeed(const int16_t *u, motor_t *pHandle_motor);
+void get_motor_speed_from_u(const int32_t *u, int16_t *w_rpm, motor_t *pHandle_motor);
+
 
 //#define RAD_MAX_16		4
 #define RAD_MAX_32		5
 //#define RAD_MAX_64		6
+
+
+// Werte aus MATLAB (bereits auf int16_t skaliert)
+//const int16_t A_inv_Q21[4][4] = {
+//    {   186,  -1163,   1163,  20581 },
+//    {   186,   1163,   1163, -20581 },
+//    {   186,   1163,  -1163,  20581 },
+//    {   186,  -1163,  -1163, -20581 }
+//};
 
 
 #endif /* INC_ATTITUDE_CONTROL_H_ */

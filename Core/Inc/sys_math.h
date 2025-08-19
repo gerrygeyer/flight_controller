@@ -28,6 +28,9 @@
 
 #define PI_OVER_2_Q15		16384
 #define RPM_TO_RAD_Q15		3432
+#define RAD2RPM_2_Q8 		23344 // (60(2pi)^2 = 91.18...-> 91.18*Q8
+#define RADQ5_TO_RPMQ13_Q15	1222 // //(60/(2*pi)) * (2^5)/((2^13))
+
 
 #define Q1					2
 #define Q4					16
@@ -41,6 +44,7 @@
 #define Q18					262144
 #define Q19					524288
 #define Q20					1048576
+#define Q21					2097152
 #define Q22					4194304
 #define Q29					536870912
 #define Q30					1073741824
@@ -397,6 +401,8 @@ void NormalizeQuaternionQ15(const int16_t *q, int16_t *q_out);
  * @see         Q15_MUL_HALF, CLAMP_INT32_TO_INT16
  */
 void multiplicateQuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_out);
+// special form with Q21 output
+void multiplicateQuaternionQ21(const int16_t *q1, const int16_t *q2, int32_t *q_out);
 
 /**
  * @brief       Converts a quaternion to Euler angles (roll, pitch, yaw) in Q15 format.

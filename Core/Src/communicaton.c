@@ -33,10 +33,10 @@ uint16_t battery_voltage_rx = 0;
 uint8_t system_state_rx = 0;
 
 // Empfangsbuffer (8 Byte Frame)
-uint8_t rx_buffer_motor1[8];
-uint8_t rx_buffer_motor2[8];
-uint8_t rx_buffer_motor3[8];
-uint8_t rx_buffer_motor4[8];
+uint8_t rx_buffer_motor1[LENGTH_RX_DATA];
+uint8_t rx_buffer_motor2[LENGTH_RX_DATA];
+uint8_t rx_buffer_motor3[LENGTH_RX_DATA];
+uint8_t rx_buffer_motor4[LENGTH_RX_DATA];
 
 
 // debug:
@@ -81,6 +81,32 @@ void init_motor(void){
 }
 
 
+motor_signals_16t get_motorspeed_from_ESC(void){
+	motor_signals_16t Output;
+
+	Output.m1 = rec_m1.speed_rpm;
+	Output.m2 = rec_m2.speed_rpm;
+	Output.m3 = rec_m3.speed_rpm;
+	Output.m4 = rec_m4.speed_rpm;
+
+	return (Output);
+}
+
+motor_signals_16t get_Iq_from_ESC(void){
+	motor_signals_16t Output;
+
+	Output.m1 = rec_m1.Iq;
+	Output.m2 = rec_m2.Iq;
+	Output.m3 = rec_m3.Iq;
+	Output.m4 = rec_m4.Iq;
+
+	return (Output);
+}
+
+uint16_t get_battery_voltage_from_ESC(void){
+	return (rec_m1.battery_voltage);
+}
+
 uint8_t run_motors(motor_t * pHandle){
 	uint8_t counter_fails = 0;
 	counter_fails += send_speed_status_M1(pHandle->m_1, pHandle->state_m_1);
@@ -98,6 +124,8 @@ uint8_t run_motors(motor_t * pHandle){
 }
 
 
+
+
 uint8_t send_speed_status_M1(int16_t speed, uint8_t status) {
 
 	if(COMMUNICATION_MOTOR){
@@ -110,6 +138,9 @@ uint8_t send_speed_status_M1(int16_t speed, uint8_t status) {
 		if (HAL_UART_Transmit_DMA(&huart1, TxData_M1, sizeof(TxData_M1)) != HAL_OK) {
 			return NOT_OK;
 		}
+//		if(HAL_UART_Receive_IT(&huart1, rx_buffer_motor1, LENGTH_RX_DATA) != HAL_OK){
+//			uint8_t test = 1;
+//		}
 	}
     return OK;
 }
@@ -160,13 +191,88 @@ uint8_t send_speed_status_M4(int16_t speed, uint8_t status) {
 	}
     return OK;
 }
-recive_motor get_data_from_buffer(const uint8_t *buffer){
+
+//#define RX_BUF_SIZE 64   // muss größer sein als größtes Paket
+//uint8_t uart_rx_buf[RX_BUF_SIZE];
+//volatile uint16_t rx_head = 0;
+//volatile uint16_t rx_tail = 0;
+//
+//static inline void ringbuf_push(uint8_t b) {
+//    uint16_t next = (rx_head + 1) % RX_BUF_SIZE;
+//    if (next != rx_tail) { // nur wenn nicht voll
+//        uart_rx_buf[rx_head] = b;
+//        rx_head = next;
+//    }
+//}
+//
+//static inline int ringbuf_pop(void) {
+//    if (rx_head == rx_tail) return -1; // leer
+//    uint8_t b = uart_rx_buf[rx_tail];
+//    rx_tail = (rx_tail + 1) % RX_BUF_SIZE;
+//    return b;
+//}
+
+//// ========= Parser-Zustand je Motor =========
+//typedef struct {
+//    uint8_t state;   // 0=WAIT_H1, 1=WAIT_H2, 2=READ_PAY
+//    uint8_t idx;     // Index im Frame
+//    uint8_t frame[10];
+//} parser_state_t;
+//
+//enum { WAIT_H1=0, WAIT_H2=1, READ_PAY=2 };
+//
+//// Ausgabe (global/volatile, wie du willst)
+//volatile recive_motor rec_m1, rec_m2, rec_m3, rec_m4;
+//volatile uint8_t      rec_m1_ready, rec_m2_ready, rec_m3_ready, rec_m4_ready;
+//
+//// je UART ein Byte-Puffer (für HAL)
+//static uint8_t uart_rx_byte_m1, uart_rx_byte_m2, uart_rx_byte_m3, uart_rx_byte_m4;
+//static parser_state_t ps_m1 = {0}, ps_m2 = {0}, ps_m3 = {0}, ps_m4 = {0};
+//
+//// ========= Parser für EIN Byte =========
+//static inline int parse_byte(parser_state_t *ps, uint8_t b, recive_motor *out)
+//{
+//    switch(ps->state){
+//    case WAIT_H1:
+//        if (b == 0xF9){ ps->frame[0]=b; ps->state=WAIT_H2; }
+//        break;
+//    case WAIT_H2:
+//        if (b == 0xF7){ ps->frame[1]=b; ps->idx=2; ps->state=READ_PAY; }
+//        else           { ps->state=WAIT_H1; }
+//        break;
+//    case READ_PAY:
+//        ps->frame[ps->idx++] = b;
+//        if (ps->idx >= 10){
+//            ps->state = WAIT_H1; // Frame komplett
+//            if (ps->frame[9] == 0x53){ // Footer ok
+//                out->Iq              = (int16_t)(ps->frame[2] | (ps->frame[3] << 8));
+//                out->speed_rpm       = (int16_t)(ps->frame[4] | (ps->frame[5] << 8));
+//                out->battery_voltage = (uint16_t)(ps->frame[6] | (ps->frame[7] << 8));
+//                out->system_state    = ps->frame[8];
+//                out->service         = 0;
+//                return 1; // gültiger Frame
+//            }
+//        }
+//        break;
+//    default: ps->state = WAIT_H1; break;
+//    }
+//    return 0;
+//}
+//in header : #define LENGTH_RX_DATA	12
+static recive_motor get_data_from_buffer(const uint8_t *buffer){
 	recive_motor Output;
-	Output.Iq 				= (int16_t)(buffer[1] | (buffer[2] << 8));
-	Output.speed_rpm 		= (int16_t)(buffer[3] | (buffer[4] << 8));
-	Output.battery_voltage	= (uint16_t)(buffer[5] | (buffer[6] << 8));
-	Output.system_state		= buffer[7];
+//	static int16_t debug_last_speed_val = 0;
+
+	Output.system_state		= buffer[2];
+	Output.Iq 				= (int16_t)(buffer[3] | (buffer[4] << 8));
+	Output.speed_rpm 		= (int16_t)(buffer[5] | (buffer[6] << 8));
+	Output.battery_voltage	= (uint16_t)(buffer[7] | (buffer[8] << 8));
 	Output.service 			= 0;
+
+
+//	if(Output.speed_rpm > 100){
+//		debug_counter++;
+//	}
 
 	return (Output);
 }
@@ -175,34 +281,51 @@ void Recive_motor_status(uint8_t motor){
 
 	switch (motor){
 	case 1:
-		if (rx_buffer_motor1[0] == 0xFF) {
-			rec_m1 = get_data_from_buffer(rx_buffer_motor1);
-		}
-		// Neustarten des Empfangs
-		HAL_UART_Receive_IT(&huart1, rx_buffer_motor1, 8);
+        if (   rx_buffer_motor1[0] == 0xF9
+            && rx_buffer_motor1[1] == 0xF7
+            && rx_buffer_motor1[9] == 0x53)
+
+        {
+        	uint8_t system_state = rx_buffer_motor1[2];
+        	if( system_state < 5 || system_state == 255){
+                __disable_irq();
+                rec_m1 = get_data_from_buffer(rx_buffer_motor1); // entpackt + prüft erneut (idempotent)
+                if(rec_m1.speed_rpm > 100){
+                	int test = 1;
+                }
+                __enable_irq();
+        	 }
+            }
+        HAL_UART_Receive_IT(&huart1, rx_buffer_motor1, LENGTH_RX_DATA); // LENGTH_RX_DATA = 12
 		break;
 	case 2:
 		if (rx_buffer_motor2[0] == 0xFF) {
+			__disable_irq();
 			rec_m2 = get_data_from_buffer(rx_buffer_motor2);
+			__enable_irq();
 		}
 		// Neustarten des Empfangs
-		HAL_UART_Receive_IT(&huart2, rx_buffer_motor2, 8);
+		HAL_UART_Receive_IT(&huart2, rx_buffer_motor2, LENGTH_RX_DATA);
 		break;
 
 	case 3:
 		if (rx_buffer_motor3[0] == 0xFF) {
+			__disable_irq();
 			rec_m3 = get_data_from_buffer(rx_buffer_motor3);
+			__enable_irq();
 		}
 		// Neustarten des Empfangs
-		HAL_UART_Receive_IT(&huart3, rx_buffer_motor3, 8);
+		HAL_UART_Receive_IT(&huart3, rx_buffer_motor3, LENGTH_RX_DATA);
 		break;
 
 	case 4:
 		if (rx_buffer_motor4[0] == 0xFF) {
+			__disable_irq();
 			rec_m4 = get_data_from_buffer(rx_buffer_motor4);
+			__enable_irq();
 		}
 		// Neustarten des Empfangs
-		HAL_UART_Receive_IT(&huart6, rx_buffer_motor4, 8);
+		HAL_UART_Receive_IT(&huart6, rx_buffer_motor4, LENGTH_RX_DATA);
 		break;
 	default:
 		// do nothing
@@ -220,19 +343,19 @@ void service_recive_motor_information(void){
 	rec_m3.service++;
 	rec_m4.service++;
 
-	if (rec_m1.service > 100){
+	if (rec_m1.service > 5){
 		Start_recive_motor_data(1);
 		rec_m1.service = 0;
 	}
-	if (rec_m2.service > 100){
+	if (rec_m2.service > 5){
 		Start_recive_motor_data(2);
 		rec_m2.service = 0;
 	}
-	if (rec_m3.service > 100){
+	if (rec_m3.service > 5){
 		Start_recive_motor_data(3);
 		rec_m3.service = 0;
 	}
-	if (rec_m4.service > 100){
+	if (rec_m4.service > 5){
 		Start_recive_motor_data(4);
 		rec_m4.service = 0;
 	}
@@ -242,13 +365,13 @@ void service_recive_motor_information(void){
 
 
 
-// Startet den ersten DMA/UART-Empfang
+// Startet den ersten UART-Empfang
 static void Start_recive_motor_data(uint8_t motor) {
 
 	switch(motor){
 	case 1:
 		if (HAL_UART_GetState(&huart1) == HAL_UART_STATE_READY) {
-			if (HAL_UART_Receive_IT(&huart1, rx_buffer_motor1, 8) != HAL_OK) {
+			if (HAL_UART_Receive_IT(&huart1, rx_buffer_motor1, LENGTH_RX_DATA) != HAL_OK) {
 				// Fehlerbehandlung falls Empfang nicht starten konnte
 	//            Error_Handler();
 			}
@@ -256,7 +379,7 @@ static void Start_recive_motor_data(uint8_t motor) {
 		break;
 	case 2:
 		if (HAL_UART_GetState(&huart2) == HAL_UART_STATE_READY) {
-			if (HAL_UART_Receive_IT(&huart2, rx_buffer_motor2, 8) != HAL_OK) {
+			if (HAL_UART_Receive_IT(&huart2, rx_buffer_motor2, LENGTH_RX_DATA) != HAL_OK) {
 				// Fehlerbehandlung falls Empfang nicht starten konnte
 	//            Error_Handler();
 			}
@@ -264,7 +387,7 @@ static void Start_recive_motor_data(uint8_t motor) {
 		break;
 	case 3:
 		if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY) {
-			if (HAL_UART_Receive_IT(&huart3, rx_buffer_motor3, 8) != HAL_OK) {
+			if (HAL_UART_Receive_IT(&huart3, rx_buffer_motor3, LENGTH_RX_DATA) != HAL_OK) {
 				// Fehlerbehandlung falls Empfang nicht starten konnte
 	//            Error_Handler();
 			}
@@ -272,7 +395,7 @@ static void Start_recive_motor_data(uint8_t motor) {
 		break;
 	case 4:
 		if (HAL_UART_GetState(&huart6) == HAL_UART_STATE_READY) {
-			if (HAL_UART_Receive_IT(&huart6, rx_buffer_motor4, 8) != HAL_OK) {
+			if (HAL_UART_Receive_IT(&huart6, rx_buffer_motor4, LENGTH_RX_DATA) != HAL_OK) {
 				// Fehlerbehandlung falls Empfang nicht starten konnte
 	//            Error_Handler();
 			}
@@ -280,25 +403,25 @@ static void Start_recive_motor_data(uint8_t motor) {
 		break;
 	default: // start all. used in init process
 		if (HAL_UART_GetState(&huart1) == HAL_UART_STATE_READY) {
-			if (HAL_UART_Receive_IT(&huart1, rx_buffer_motor1, 8) != HAL_OK) {
+			if (HAL_UART_Receive_IT(&huart1, rx_buffer_motor1, LENGTH_RX_DATA) != HAL_OK) {
 				// Fehlerbehandlung falls Empfang nicht starten konnte
 	//            Error_Handler();
 			}
 		}
 		if (HAL_UART_GetState(&huart2) == HAL_UART_STATE_READY) {
-			if (HAL_UART_Receive_IT(&huart2, rx_buffer_motor2, 8) != HAL_OK) {
+			if (HAL_UART_Receive_IT(&huart2, rx_buffer_motor2, LENGTH_RX_DATA) != HAL_OK) {
 				// Fehlerbehandlung falls Empfang nicht starten konnte
 	//            Error_Handler();
 			}
 		}
 		if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY) {
-			if (HAL_UART_Receive_IT(&huart3, rx_buffer_motor3, 8) != HAL_OK) {
+			if (HAL_UART_Receive_IT(&huart3, rx_buffer_motor3, LENGTH_RX_DATA) != HAL_OK) {
 				// Fehlerbehandlung falls Empfang nicht starten konnte
 	//            Error_Handler();
 			}
 		}
 		if (HAL_UART_GetState(&huart6) == HAL_UART_STATE_READY) {
-			if (HAL_UART_Receive_IT(&huart6, rx_buffer_motor4, 8) != HAL_OK) {
+			if (HAL_UART_Receive_IT(&huart6, rx_buffer_motor4, LENGTH_RX_DATA) != HAL_OK) {
 				// Fehlerbehandlung falls Empfang nicht starten konnte
 	//            Error_Handler();
 			}
@@ -306,6 +429,8 @@ static void Start_recive_motor_data(uint8_t motor) {
 	break;
 }
 }
+
+
 
 
 // DEBUGGING FUNCTIONS

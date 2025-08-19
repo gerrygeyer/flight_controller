@@ -29,6 +29,7 @@ extern I2C_HandleTypeDef hi2c2;
 sensor_fusion sf_values;
 // ####### DOUBLE BUFFER ######
 wxyz_16t quaternion_buffer;
+xyz_16t gyro_rad_buffer;
 volatile bool sf_writing;
 // ##### SETINGS #####
 float beta_f;
@@ -70,15 +71,29 @@ static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf);
 static void q15_qDot_mu_dt_with_rest(int16_t *q_in, const int16_t *qDot, const int16_t dt);
 static void iir_filter_bx_bz_q15(int16_t *bxz);
 
-wxyz_16t get_quaternion_Q15(void) {
+void get_quaternion_Q15(int16_t *q, int16_t *w) {
 	__disable_irq();
-	wxyz_16t q;
 	if(!sf_writing){
-		q = sf_values.quaternion;
+		q[0] = sf_values.quaternion.w;
+		q[1] = sf_values.quaternion.x;
+		q[2] = sf_values.quaternion.y;
+		q[3] = sf_values.quaternion.z;
+
+		w[0] = sf_values.gyro_t_rad.x;
+		w[1] = sf_values.gyro_t_rad.y;
+		w[2] = sf_values.gyro_t_rad.z;
 		__enable_irq();
 		return q;
 	}else{
-		q = quaternion_buffer;
+		q[0] = quaternion_buffer.w;
+		q[1] = quaternion_buffer.x;
+		q[2] = quaternion_buffer.y;
+		q[3] = quaternion_buffer.z;
+
+		w[0] = gyro_rad_buffer.x;
+		w[1] = gyro_rad_buffer.y;
+		w[2] = gyro_rad_buffer.z;
+
 		__enable_irq();
 		return q;
 	}
@@ -269,7 +284,7 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 
 
 
-	q15_qDot_mu_dt_with_rest(q_madgwick_out,qDot, dt_q15);
+	q15_qDot_mu_dt_with_rest(q_madgwick_out,qDot, dt_q15); // here in dt_q15 the calc gyro_grad_2_rad
 
 	NormalizeQuaternionQ15(q_madgwick_out, q_madgwick_out);
 	debug_q_out_norm.w = q_madgwick_out[0];
@@ -283,17 +298,28 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 	euler_debug_pitch = (float)euler_debug[1];// * 360.0f / (float)INT16_MAX;
 	euler_debug_yaw = (float)euler_debug[2];// * 360.0f / (float)INT16_MAX;
 
+	// Safe quaternion / gyro two times
+	// 1. Time
 	sf_writing = true;
 	pHandle_sf->quaternion.w = q_madgwick_out[0];
 	pHandle_sf->quaternion.x = q_madgwick_out[1];
 	pHandle_sf->quaternion.y = q_madgwick_out[2];
 	pHandle_sf->quaternion.z = q_madgwick_out[3];
-	sf_writing = false;
 
-	quaternion_buffer.w = pHandle_sf->quaternion.w;
-	quaternion_buffer.x = pHandle_sf->quaternion.x;
-	quaternion_buffer.y = pHandle_sf->quaternion.y;
-	quaternion_buffer.z = pHandle_sf->quaternion.z;
+	pHandle_sf->gyro_t_rad.x =  q15_mul(gyro[0],GRAD2RAD_GYRO_MAX_Q15);
+	pHandle_sf->gyro_t_rad.y =  q15_mul(gyro[1],GRAD2RAD_GYRO_MAX_Q15);
+	pHandle_sf->gyro_t_rad.z =  q15_mul(gyro[2],GRAD2RAD_GYRO_MAX_Q15);
+	sf_writing = false;
+	// 2. Time
+	quaternion_buffer.w = q_madgwick_out[0];
+	quaternion_buffer.x = q_madgwick_out[1];
+	quaternion_buffer.y = q_madgwick_out[2];
+	quaternion_buffer.z = q_madgwick_out[3];
+
+	gyro_rad_buffer.x =  q15_mul(gyro[0],GRAD2RAD_GYRO_MAX_Q15);
+	gyro_rad_buffer.y =  q15_mul(gyro[1],GRAD2RAD_GYRO_MAX_Q15);
+	gyro_rad_buffer.z =  q15_mul(gyro[2],GRAD2RAD_GYRO_MAX_Q15);
+	// end
 }
 
 static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf){
@@ -344,18 +370,28 @@ static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf){
 
 	NormalizeQuaternionQ15(q_madgwick_out, q_madgwick_out);
 
-	// Safe quaternion two times
+	// Safe quaternion / gyro two times
+	// 1. Time
 	sf_writing = true;
 	pHandle_sf->quaternion.w = q_madgwick_out[0];
 	pHandle_sf->quaternion.x = q_madgwick_out[1];
 	pHandle_sf->quaternion.y = q_madgwick_out[2];
 	pHandle_sf->quaternion.z = q_madgwick_out[3];
-	sf_writing = false;
 
-	quaternion_buffer.w = pHandle_sf->quaternion.w;
-	quaternion_buffer.x = pHandle_sf->quaternion.x;
-	quaternion_buffer.y = pHandle_sf->quaternion.y;
-	quaternion_buffer.z = pHandle_sf->quaternion.z;
+	pHandle_sf->gyro_t_rad.x =  q15_mul(gyro[0],GRAD2RAD_GYRO_MAX_Q15);
+	pHandle_sf->gyro_t_rad.y =  q15_mul(gyro[1],GRAD2RAD_GYRO_MAX_Q15);
+	pHandle_sf->gyro_t_rad.z =  q15_mul(gyro[2],GRAD2RAD_GYRO_MAX_Q15);
+	sf_writing = false;
+	// 2. Time
+	quaternion_buffer.w = q_madgwick_out[0];
+	quaternion_buffer.x = q_madgwick_out[1];
+	quaternion_buffer.y = q_madgwick_out[2];
+	quaternion_buffer.z = q_madgwick_out[3];
+
+	gyro_rad_buffer.x =  q15_mul(gyro[0],GRAD2RAD_GYRO_MAX_Q15);
+	gyro_rad_buffer.y =  q15_mul(gyro[1],GRAD2RAD_GYRO_MAX_Q15);
+	gyro_rad_buffer.z =  q15_mul(gyro[2],GRAD2RAD_GYRO_MAX_Q15);
+	// end
 
 	debug_q_out_norm.w = q_madgwick_out[0];
 	debug_q_out_norm.x = q_madgwick_out[1];

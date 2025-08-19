@@ -23,6 +23,7 @@
 #define GYRO_GRAD_TO_RAD_DELTA_T_Q15	(DEGREE_TO_RAD * 2000.0f / (float)SENSOR_FUSION_FREQUENCY_IMU) * (float)Q15
 
 #define GRAD2RAD_GYRO 	34.906585f
+#define GRAD2RAD_GYRO_MAX_Q15 	939 // (1/2000'°/s')* (2*pi/360°) -> Gyro * 938.7341; max output = 34,9 rad/s
 
 /*
  * normierter_wert = deg_per_sec / 2000
@@ -42,7 +43,7 @@ void task_imu_sensor_fusion(void);
 void mag_ready(void);
 
 
-wxyz_16t get_quaternion_Q15(void);
+void get_quaternion_Q15(int16_t *q, int16_t *w);
 
 /**
  * @brief Returns a direct pointer to the live sensor fusion data.

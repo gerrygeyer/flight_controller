@@ -29,8 +29,8 @@
 #define SYSTEM_FREQUENCY	100 // Hz
 #define SYSTEM_TS			(float)(1.0f/(float)SYSTEM_FREQUENCY)
 
-#define MAX_SPEED_MOTOR_RPM 5000
-#define MAX_SPEED_MOTOR_RAD 524
+#define MAX_SPEED_MOTOR_RPM 8192 // its Q13
+#define MAX_SPEED_MOTOR_RAD 1024 // its Q10 (its a little bit more than Q9)
 
 #define DRONE_PARAM_K		0.000021f
 #define DRONE_PARAM_L		0.16f
@@ -38,9 +38,9 @@
 
 
 
-#define DRONE_PARAM_K_E6	7.7f
-#define DRONE_PARAM_KL_E6	1.232f
-#define DRONE_PARAM_B_E6	0.144f
+#define DRONE_PARAM_K_E6	21.0f
+#define DRONE_PARAM_KL_E6	3.36f // = 0,00000336
+#define DRONE_PARAM_B_E6	0.1898f
 #define E6					1000000
 
 
@@ -166,6 +166,7 @@ typedef struct{
 	int16_t yaw;	/**< pitch in Q15 representation (for better visualisaton/debug) */
 
 	wxyz_16t quaternion;	/** Sensor fusion output q */
+	xyz_16t gyro_t_rad; /** raw gyro data in rad with Q15 = 34.9066 rad/s */
 
 }sensor_fusion;
 
@@ -179,9 +180,9 @@ typedef struct{
 }error_flag;
 
 typedef struct{
-	 int16_t Jxx;
-	 int16_t Jyy;
-	 int16_t Jzz;
+	 int32_t Jxx;
+	 int32_t Jyy;
+	 int32_t Jzz;
 }system_parameter;
 
 /**
@@ -197,5 +198,20 @@ typedef struct
 	uint8_t system_state; /**< FieldDesc3 */
 	uint8_t service;
 } recive_motor;
+
+/**
+ * @brief Struct for diffrent signals of the 4 motors
+ * @note  Optionaler Hinweis zur Verwendung
+ * @see   ReferenzOderModulname
+ */
+typedef struct
+{
+	int16_t m1; /**< Motor 1 (RPM, Iq,...) */
+	int16_t m2; /**< Motor 2 (RPM, Iq,...)  */
+	int16_t m3; /**< Motor 3 (RPM, Iq,...)  */
+	int16_t m4; /**< Motor 4 (RPM, Iq,...)  */
+} motor_signals_16t;
+
+
 
 #endif /* INC_PARAMETER_H_ */
