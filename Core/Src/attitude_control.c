@@ -15,6 +15,9 @@
 
 #include <string.h>
 
+float debug_u_f1, debug_u_f2, debug_u_f3,debug_u_f4;
+
+
 
 /**
  * @brief       Multiplies two Q15 fixed-point numbers with rounding.
@@ -78,6 +81,10 @@ static void feedback_linearisation(const int16_t *u,const int16_t *w,system_para
 
 
 system_parameter drone_parameter;
+volatile bool correction_ready;
+
+P2_attitude_control gain;
+
 
 
 float inv_A[4][4];
@@ -95,16 +102,27 @@ void init_attitude_control(void){
 	generate_matrix_A(A, DRONE_PARAM_K_E6, DRONE_PARAM_KL_E6, DRONE_PARAM_B_E6);
 	inverse_matrix_4x4_f(A,inv_A);
 
+	correction_ready = false;
 
-	drone_parameter.Jxx = 402; //0.012273 * Q15
-	drone_parameter.Jyy = 410; //0.012526 * Q15
-	drone_parameter.Jzz = 687; //0.020953 * Q15
+
+	drone_parameter.Jxx = (int16_t)(0.012273f * (float)Q15);
+	drone_parameter.Jyy = (int16_t)(0.012526f * (float)Q15);
+	drone_parameter.Jzz = (int16_t)(0.020953f * (float)Q15);
 
 //	drone_parameter.Jxx = 25738; //0.012273 * Q21
 //	drone_parameter.Jyy = 26269; //0.012526 * Q21
 //	drone_parameter.Jzz = 43942; //0.020953 * Q21
 
 //	drone_parameter.Jz_y_div_x = drone_parameter.Jzz - drone_parameter.Jyy
+
+	gain.P1.pitch = 20;
+	gain.P1.roll = 20;
+	gain.P1.yaw = 3;
+
+
+	gain.P2.pitch = 4;
+	gain.P2.roll = 4;
+	gain.P2.yaw = 10;
 
 
 }
@@ -121,19 +139,6 @@ void run_attitude_control(motor_t *pHandle_motor, at_control_f *pHandle_control)
 
 	debug_angle = pitch_roll_yaw;
 
-//	switch (ATTITUDE_CONTROL){
-//
-//		case PID:
-//			u_control = attitude_PID_control(&pitch_roll_yaw, pHandle_control);
-//			generate_u_vector(u_control,u);
-//			break;
-//		case LQR:
-//			attitude_LQR_control(u, &pitch_roll_yaw,&p_q_r, pHandle_control);
-//			break;
-//		default:
-//			system_stop_function();
-//			break;
-//	}
 
 	multiply_4x4_with_vector(inv_A, u, w_2);
 	generate_RPM_commands(w_2, pHandle_motor);
@@ -142,10 +147,16 @@ void run_attitude_control(motor_t *pHandle_motor, at_control_f *pHandle_control)
 void transform_u2_motorSpeed(const int16_t *u, motor_t *pHandle_motor){
 	float u_f[4][1], w_2[4][1];
 
-	u_f[0][0] = (float)u[0]/(float)Q10;
-	u_f[1][0] = (float)u[1]/(float)Q10;
-	u_f[2][0] = (float)u[2]/(float)Q10;
-	u_f[3][0] = (float)u[3]/(float)Q10;
+	u_f[0][0] = 6.7f;//(float)u[0]/(float)Q15;
+	u_f[1][0] = (float)u[1]/(float)Q15;
+	u_f[2][0] = (float)u[2]/(float)Q15;
+	u_f[3][0] = (float)u[3]/(float)Q15;
+
+	debug_u_f1 = u_f[0][0];
+	debug_u_f2 = u_f[1][0];
+	debug_u_f3 = u_f[2][0];
+	debug_u_f4 = u_f[3][0];
+
 	multiply_4x4_with_vector(inv_A, u_f, w_2);
 	generate_RPM_commands(w_2, pHandle_motor);
 }
@@ -328,20 +339,15 @@ static void differential_with_scaling_q15(const int16_t *val, const int16_t *val
 void attitude_control_quaternion_lqr_q15(const int16_t *q,const int16_t *q_ref, const int16_t *w_gyro_t, int16_t *tau){
 
 int16_t q_inv[4],q_ref_inv[4], q_err[4], q_err_inv[4], ln_q[3],w[4], w_err[4], diff_err[4], diff_q[4], x_err[6], u_lqr[3];
-static int16_t q_err_last_value[4], q_last_value[4];
-int16_t q_debug[4]; // löschen
-
-q_debug[0] = q[0];
-q_debug[1] = q[1];
-q_debug[2] = q[2];
-q_debug[3] = q[3];
+static int16_t q_err_last_value[4], q_last_value[4], q_last_last_value[4];
+static uint8_t q_count= 0;
 
 //memcpy(q_ref_inv, q_ref,sizeof(q_inv));
 copy_q(q_ref, q_ref_inv);
 // generate linearized quaternion error: theta_
 q_t_conj_function(q_ref_inv);
 //multiplicateQuaternionQ15(q_ref_inv, q, q_err);
-multiplicateQuaternionQ15(q_ref_inv, q, q_err);
+multiplicateQuaternionQ15(q_ref_inv, q, q_err); // stimmt
 ln_q15_unit_quaternions_multiplicate_2(q_err, ln_q);
 
 // calculate angular velocity error: w_err
@@ -353,10 +359,10 @@ debug_q_err.x = q_err[1];
 debug_q_err.y = q_err[2];
 debug_q_err.z = q_err[3];
 
-debug_q_err_old.w = q_err[0];
-debug_q_err_old.x = q_err[1];
-debug_q_err_old.y = q_err[2];
-debug_q_err_old.z = q_err[3];
+debug_q_err_old.w = q_err_last_value[0];
+debug_q_err_old.x = q_err_last_value[1];
+debug_q_err_old.y = q_err_last_value[2];
+debug_q_err_old.z = q_err_last_value[3];
 
 differential_with_scaling_q15(q_err, q_err_last_value,0, ATTITUDE_FREQUENCY, diff_err); // RAD_MAX_32
 speed_IIR_LP_filter_Q15(diff_err);
@@ -397,13 +403,22 @@ differential_with_scaling_q15(q, q_last_value,0,ATTITUDE_FREQUENCY, diff_q); // 
 
 multiplicateQuaternionQ15(q_inv,diff_q,w);
 
-// feedback linearisation
+
 feedback_linearisation(u_lqr, w_gyro_t, &drone_parameter, tau);
 
-//memcpy(q_err_last_value, q_err, sizeof(q_err)); // Necessary for differential_q15();
-//memcpy(q_last_value, q, 4 * sizeof(int16_t)); // Necessary for differential_q15();
-copy_q(q_err, q_err_last_value);
-copy_q(q, q_last_value);
+q_err_last_value[0] = q_err[0];
+q_err_last_value[1] = q_err[1];
+q_err_last_value[2] = q_err[2];
+q_err_last_value[3] = q_err[3];
+//copy_q(q, q_last_value);
+
+if(q_count++ > 10){
+q_last_value[0] = q[0];
+q_last_value[1] = q[1];
+q_last_value[2] = q[2];
+q_last_value[3] = q[3];
+q_count = 0;
+}
 
 }
 
@@ -446,45 +461,13 @@ static void lqr_q15(const int16_t *x_error,int16_t *u_out){
 		sum += (x >> 2); // Q23
 
 		sum = ((sum + (1 << 12)) >> 13); // back to Q10 -> u_max = Q5
-		u_out[i] = CLAMP_INT32_TO_INT16(sum);
+		u_out[i] = -CLAMP_INT32_TO_INT16(sum);
 	}
 }
 
 
 
-/**
- * @brief       Computes the cross product of two 3D vectors in Q15 fixed-point format.
- *
- * @details     This function calculates the cross product of two input vectors @p v1 and @p v2,
- *              both represented in Q15 fixed-point format. Intermediate results are calculated
- *              using 32-bit integers to prevent overflow and then scaled back to Q15 with rounding.
- *
- * @param[in]   v1     Pointer to the first vector (array of 3 Q15 values).
- * @param[in]   v2     Pointer to the second vector (array of 3 Q15 values).
- * @param[out]  cross  Pointer to the output vector (array of 3 Q15 values).
- *
- * @note        The function uses 32-bit intermediate arithmetic and rounding
- *              with `(1 << 13)` before shifting back to Q15.
- * @warning     Input values must be within the valid Q15 range ([-1, 1) scaled to int16_t).
- *
- * @see         dotproduct_3x3_Q15()
- */
-static void crossproduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *cross){
-	int32_t x;
 
-	x = (((int32_t)v1[1] * (int32_t)v2[2]) >> 1) - (((int32_t)v1[2] * (int32_t)v2[1]) >> 1);
-	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
-	cross[0] = CLAMP_INT32_TO_INT16(x);
-
-	x = (((int32_t)v1[2] * (int32_t)v2[0]) >> 1) - (((int32_t)v1[0] * (int32_t)v2[2]) >> 1);
-	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
-	cross[1] = CLAMP_INT32_TO_INT16(x);
-
-	x = (((int32_t)v1[0] * (int32_t)v2[1]) >> 1) - (((int32_t)v1[1] * (int32_t)v2[0]) >> 1);
-	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
-	cross[2] = CLAMP_INT32_TO_INT16(x);
-
-}
 
 
 //static void feedback_linearisation(const int16_t *u,const int16_t *w,system_parameter *pHandle, int16_t *tau){
@@ -509,28 +492,29 @@ static void feedback_linearisation(const int16_t *u,const int16_t *w,system_para
 
 	int32_t x, y;
 
-	// input u, max torque is Q5 = 32 N
+	// input u, max torque is Q5 = 16 N
 	// input w, max speed ist 34,9 rad/s
+	// scaling the result with Q5
 
-	x = pHandle->Jxx * (int32_t)u[0]; // Q15 * Q15 = Q30
-	y = (((int32_t)w[2] * (int32_t)w[1])/939); // Q15/34.9 = 939
+	x = (pHandle->Jxx << 5) * (int32_t)u[0]; // Q20 * Q10 = Q30
+	y = (((int32_t)w[2] * (int32_t)w[1])/27); // Q15/(34.9)^2 = 26.9
 	y = (y * (int32_t)(pHandle->Jzz - pHandle->Jyy));
-	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
+//	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
 	tau[0] = CLAMP((x + y) >> 15, -Q15,Q15);
 // ab hier
-	x = pHandle->Jyy * (int32_t)u[1]; // Q15 * Q15 = Q30
-	y = (((int32_t)w[2] * (int32_t)w[0])/939); // Q15/34.9 = 939
+	x = (pHandle->Jyy << 5) * (int32_t)u[1]; // Q20 * Q10 = Q30
+	y = (((int32_t)w[2] * (int32_t)w[0])/27); // Q15/(34.9)^2 = 26.9
 	y = (y * (int32_t)(pHandle->Jxx - pHandle->Jzz));
-	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
+//	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
 	tau[1] = CLAMP((x + y) >> 15, -Q15,Q15);
 
-	x = pHandle->Jyy * (int32_t)u[2]; // Q15 * Q15 = Q30
-	y = (((int32_t)w[0] * (int32_t)w[1])/939); // Q15/34.9 = 939
-	y = (y * (int32_t)(pHandle->Jxx - pHandle->Jzz));
-	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
+	x = (pHandle->Jzz << 5) * (int32_t)u[2]; // Q20 * Q10 = Q30
+	y = (((int32_t)w[0] * (int32_t)w[1])/27); // Q15/(34.9)^2 = 26.9
+	y = (y * (int32_t)(pHandle->Jyy - pHandle->Jxx));
+//	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
 	tau[2] = CLAMP((x + y) >> 15, -Q15,Q15);
 
-	// unit of tau is Q21/max_torque
+	// unit of tau is Q20/max_torque
 }
 
 
@@ -584,3 +568,91 @@ void get_motor_speed_from_u(const int32_t *u, int16_t *w_rpm, motor_t *pHandle_m
 static inline int16_t q15_mul(int16_t a, int16_t b) {
     return (int16_t)(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
 }
+
+
+void set_init_yaw_position(const int16_t *q, int16_t *q_yaw_corr, int16_t *q_axis_corr){
+	int16_t w[4], theta, q_corr_0, q_corr_3;
+	int32_t q_03, q_12, q_22,q_33,x,y;
+
+	// calculation of yaw with \psi = \operatorname{atan2}\!\big( 2(q_0 q_3 + q_1 q_2), \; 1 - 2(q_2^2 + q_3^2) \big)
+	q_03 = ((int32_t)q[0] * (int32_t)q[3]) >> 1; // Q29
+	q_12 = ((int32_t)q[1] * (int32_t)q[2]) >> 1; // Q29
+	x = (q_03 + q_12 + (1 << 12)) >> 13; // 2*Q15
+	x = CLAMP_INT32_TO_INT16(x);
+
+	q_22 = ((int32_t)q[2] * (int32_t)q[2]) >> 1; // Q29
+	q_33 = ((int32_t)q[3] * (int32_t)q[3]) >> 1; // Q29
+	y = (q_22 + q_33 + (1<<12)) >> 13;	// 2*Q15
+	y = CLAMP_INT32_TO_INT16(y);
+	y = (Q15 - y);
+
+	theta = q15_atan2(x,y);
+	theta = (theta >> 1); // theta/2
+//	q_correct
+	q_corr_0 = cos_i(theta);
+	q_corr_3 = -sin_i(theta);
+
+	q_yaw_corr[0] = q_corr_0;
+	q_yaw_corr[1] = 0;
+	q_yaw_corr[2] = 0;
+	q_yaw_corr[3] = q_corr_3;
+
+	q_axis_corr[0]= cos_i((Q15 >> 2));
+	q_axis_corr[1]= 0;
+	q_axis_corr[2]= 0;
+	q_axis_corr[3]= sin_i((Q15 >> 2));
+
+	NormalizeQuaternionQ15(q_yaw_corr, q_yaw_corr);
+	NormalizeQuaternionQ15(q_axis_corr, q_axis_corr);
+	correction_ready = 1;
+
+}
+
+void correct_q_axis(const int16_t *q_yaw_corr,const int16_t *q_axis_corr, int16_t *q, int16_t *w){
+	if(correction_ready){
+		int16_t q_out[4],q_B_con[4], w_q[4];
+		rotate_quat_sandwich_q15(q_yaw_corr,q,q_axis_corr,q_out);
+
+		q[0] = q_out[0];
+		q[1] = q_out[1];
+		q[2] = q_out[2];
+		q[3] = q_out[3];
+
+		w_q[0] = 0;
+		w_q[1] = w[0];
+		w_q[2] = w[1];
+		w_q[3] = w[2];
+		q_t_conj_function_in_out_q15(q_axis_corr, q_B_con);
+		rotate_quat_sandwich_q15(q_B_con, w_q, q_axis_corr, w_q);
+		w[0] = w_q[1];
+		w[1] = w_q[2];
+		w[2] = w_q[3];
+	}
+}
+
+
+void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q_ref, const int16_t *w_gyro_t, int16_t *tau){
+	int16_t q_reff[4], q_con[4], q_err[4];
+	int32_t out[3];
+
+	copy_q(q_ref,q_reff);
+	copy_q(q,q_con);
+	q_t_conj_function(q_con);
+	q_t_flipp(q_reff);
+	multiplicateQuaternionQ15(q_reff, q_con, q_err);
+
+	out[0] = -q_err[1] * (int16_t)(gain.P1.pitch);
+	out[1] = -q_err[2] * (int16_t)(gain.P1.roll);
+	out[2] = -q_err[3] * (int16_t)(gain.P1.yaw);
+
+	out[0] = -w_gyro_t[1] * (int16_t)(gain.P2.pitch * 34.9f);
+	out[1] = -w_gyro_t[2] * (int16_t)(gain.P2.roll * 34.9f);
+	out[2] = -w_gyro_t[3] * (int16_t)(gain.P2.yaw * 34.9f);
+
+	tau[0] = CLAMP_INT32_TO_INT16(out[0]);
+	tau[1] = CLAMP_INT32_TO_INT16(out[1]);
+	tau[2] = CLAMP_INT32_TO_INT16(out[2]);
+}
+
+
+

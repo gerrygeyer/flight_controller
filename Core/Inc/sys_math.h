@@ -26,6 +26,7 @@
 #define RAD_TO_DEGREE		(float)57.29577951308232
 
 
+#define PI_Q13				25736
 #define PI_OVER_2_Q15		16384
 #define RPM_TO_RAD_Q15		3432
 #define RAD2RPM_2_Q8 		23344 // (60(2pi)^2 = 91.18...-> 91.18*Q8
@@ -209,6 +210,12 @@ int16_t q15_acos(int16_t x);
  */
 int16_t q15_atan2(int16_t y, int16_t x);
 
+
+
+
+void crossproduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *cross);
+void dotporduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *dot);
+
 /** @} */
 
 
@@ -302,7 +309,12 @@ void q_t_conj_function(int16_t *q);
  * @note        Input and output must be arrays of 4 elements.
  * @see         Quaternion multiplication, normalization
  */
-void q_t_conj_function_in_out_q15(int16_t *q_in, int16_t *q_out);
+void q_t_conj_function_in_out_q15(const int16_t *q_in, int16_t *q_out);
+
+/**
+ * @brief		Multiply the quaternionion with -1
+ */
+void q_t_flipp(int16_t *q);
 
 /**
  * @brief       Normalizes a 3D vector to unit length in Q15 format.
@@ -401,8 +413,7 @@ void NormalizeQuaternionQ15(const int16_t *q, int16_t *q_out);
  * @see         Q15_MUL_HALF, CLAMP_INT32_TO_INT16
  */
 void multiplicateQuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_out);
-// special form with Q21 output
-void multiplicateQuaternionQ21(const int16_t *q1, const int16_t *q2, int32_t *q_out);
+
 
 /**
  * @brief       Converts a quaternion to Euler angles (roll, pitch, yaw) in Q15 format.
@@ -447,6 +458,11 @@ void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]);
  * @see         norm_3d_vector(), q15_acos(), q15_mul_2()
  */
 void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out);
+
+
+
+void rotate_quat_sandwich_q15(const int16_t *q1, const int16_t *v_q, const int16_t *q2, int16_t *v_q_out);
+void vector2quaternion_q15(const int16_t *v, int16_t *q);
 /** @} */  // end of QuaternionMathQ15 group
 
 

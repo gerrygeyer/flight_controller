@@ -27,19 +27,35 @@ uint8_t control_flag;
 
 
 wxyz_16t system_q;
+int16_t q_yaw_correction[4], q_axis_correction[4];
 
 motor_signals_16t motor_seed_esc;
 
 // debug
 int16_t debug_tau_1, debug_tau_2, debug_tau_3;
 uint8_t debug_speed_counter = 0;
+float euler_debug_ax_roll, euler_debug_ax_pitch,euler_debug_ax_yaw;
 
 static void highspeed_task(void);
 
 void task_init(void){
 
+//	system_state = SYSTEM_INIT;
 	system_state = SYSTEM_START;
 //	system_state = SYSTEM_STOP;
+
+	q_yaw_correction[0] = Q15;
+	q_yaw_correction[1] = 0;
+	q_yaw_correction[2] = 0;
+	q_yaw_correction[3] = 0;
+
+	q_axis_correction[0] = Q15;
+	q_axis_correction[1] = 0;
+	q_axis_correction[2] = 0;
+	q_axis_correction[3] = 0;
+
+
+
 
 	run_test_vectors();
 
@@ -57,9 +73,9 @@ void task_init(void){
 	control_flag = OFF;
 
 	// test
-	int16_t q[4] = { 17106, 13889, -20718, 12608};
-	int16_t q_ref[4] = {3407, -28792, 14806, 3734};
-	int16_t tau[3];
+//	int16_t q[4] = { 17106, 13889, -20718, 12608};
+//	int16_t q_ref[4] = {3407, -28792, 14806, 3734};
+//	int16_t tau[3];
 
 
 }
@@ -92,15 +108,41 @@ static void highspeed_task(void){
 	int16_t q[4], w[3],q_att_ref[4];
 	int16_t tau[3], u[4];
 	float u_f[4][1], w_f[4][1];
+	// debug
+	int16_t euler[3];
 
 
 	get_quaternion_Q15(q, w);
+//	correct_q_axis(q_yaw_correction,q_axis_correction,q,w);
+
+	quat_to_euler_q15(q, euler);
+	euler_debug_ax_roll = (float)euler[0];//* 360.0f / (float)INT16_MAX;
+	euler_debug_ax_pitch = (float)euler[1];//* 360.0f / (float)INT16_MAX;
+	euler_debug_ax_yaw = (float)euler[2];//* 360.0f / (float)INT16_MAX;
+//	correct_q_axis
 
 	motor_seed_esc = get_motorspeed_from_ESC();
 
 
 
 	switch(system_state){
+
+	case SYSTEM_INIT:
+		static uint16_t init_state_counter = 0;
+
+//		if(init_state_counter++ > INIT_WAIT_TIME){
+//			set_init_yaw_position(q,q_yaw_correction,q_axis_correction);
+//			system_state = SYSTEM_STOP;
+//			init_state_counter = 0;
+//		}
+
+//		if(init_state_counter > Q15){ // safty function
+//			set_init_yaw_position(q,q_yaw_correction,q_axis_correction);
+//			system_state = SYSTEM_STOP;
+//			init_state_counter = 0;
+//		}
+		break;
+
 	case SYSTEM_STOP:
 
 //		debug_speed_counter++;
@@ -148,12 +190,22 @@ static void highspeed_task(void){
 //		q_att_ref[3] = (int16_t)( 0.1060 * Q15);
 
 		q_att_ref[0] = (int16_t)( 1.0f * Q15);
-				q_att_ref[1] = (int16_t)( 0.0f * Q15);
-				q_att_ref[2] = (int16_t)( 0.0f * Q15);
-				q_att_ref[3] = (int16_t)( 0.0f * Q15);
+		q_att_ref[1] = (int16_t)( 0.0f * Q15);
+		q_att_ref[2] = (int16_t)( 0.0f * Q15);
+		q_att_ref[3] = (int16_t)( 0.0f * Q15);
+//		q_att_ref[0] = (int16_t)(13731);
+//		q_att_ref[1] = (int16_t)(-15570);
+//		q_att_ref[2] = (int16_t)(12978);
+//		q_att_ref[3] = (int16_t)(21780);
+//
+//		q[0] = (int16_t)(8116);
+//		q[1] = (int16_t)(3641);
+//		q[2] = (int16_t)(18167);
+//		q[3] = (int16_t)(25779);
 
 
-		attitude_control_quaternion_lqr_q15(q,q_att_ref,w,tau);
+
+		attitude_control_quaternion_lqr_q15(q,q_att_ref,w,tau); // kontrolliert
 
 		debug_tau_1 = tau[0]; // debug
 		debug_tau_2 = tau[1];	// debug

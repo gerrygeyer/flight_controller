@@ -20,6 +20,9 @@ void attitude_control_quaternion_lqr_q15(const int16_t *q,const int16_t *q_ref, 
 void transform_u2_motorSpeed(const int16_t *u, motor_t *pHandle_motor);
 void get_motor_speed_from_u(const int32_t *u, int16_t *w_rpm, motor_t *pHandle_motor);
 
+void set_init_yaw_position(const int16_t *q, int16_t *q_yaw_corr, int16_t *q_axis_corr);
+void correct_q_axis(const int16_t *q_yaw_corr,const int16_t *q_axis_corr, int16_t *q, int16_t *w);
+
 
 //#define RAD_MAX_16		4
 #define RAD_MAX_32		5

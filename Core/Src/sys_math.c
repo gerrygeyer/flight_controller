@@ -397,65 +397,42 @@ int16_t q15_asin(int16_t x) {
 }
 
 /**
- * @brief  Lookup table für acos(1 - t) in Q15-Winkelskalierung, t ∈ [0,1], 256 Schritte.
- *         Start: t=0  ⇒ acos(1)=0;  Ende: t=1 ⇒ acos(0)=π/2.
- * @note   Diese t-Sampling (t=1−x) konzentriert Punkte nahe x≈1, wo d/dx acos(x) → −∞,
- *         und liefert deutlich geringeren Fehler als eine in x gleichmäßige Tabelle.
+ * @brief  Lookup table für acos(1 - t) in Q15-Winkelskalierung (Q15/π), t ∈ [0,1], 256 Schritte.
+ *         Start: t=0 ⇒ acos(1)=0; Ende: t=1 ⇒ acos(0)=π/2 (→ 16384).
  */
 static const int16_t acos_q15_lut_t[256] = {
-      0,   924,  1307,  1601,  1850,  2069,  2267,  2450,
-   2620,  2779,  2931,  3074,  3211,  3343,  3470,  3593,
-   3712,  3828,  3941,  4051,  4158,  4263,  4366,  4467,
-   4565,  4662,  4757,  4851,  4943,  5033,  5122,  5210,
-   5296,  5381,  5465,  5547,  5629,  5710,  5789,  5868,
-   5946,  6023,  6099,  6174,  6248,  6322,  6394,  6466,
-   6537,  6608,  6677,  6746,  6814,  6882,  6949,  7015,
-   7081,  7146,  7210,  7274,  7337,  7400,  7462,  7523,
-   7584,  7645,  7705,  7764,  7823,  7882,  7940,  7997,
-   8054,  8111,  8167,  8223,  8278,  8333,  8388,  8442,
-   8495,  8549,  8601,  8654,  8706,  8758,  8809,  8860,
-   8910,  8961,  9010,  9060,  9109,  9158,  9206,  9255,
-   9302,  9350,  9397,  9444,  9491,  9537,  9583,  9629,
-   9674,  9719,  9764,  9808,  9852,  9896,  9940,  9983,
-  10026, 10068, 10111, 10153, 10195, 10236, 10278, 10319,
-  10360, 10401, 10441, 10481, 10521, 10561, 10601, 10640,
-  10679, 10718, 10757, 10795, 10834, 10872, 10910, 10948,
-  10985, 11023, 11060, 11097, 11134, 11171, 11207, 11243,
-  11279, 11315, 11351, 11387, 11422, 11457, 11492, 11527,
-  11561, 11596, 11630, 11664, 11698, 11732, 11765, 11799,
-  11832, 11865, 11898, 11931, 11963, 11996, 12028, 12060,
-  12092, 12124, 12155, 12187, 12218, 12249, 12280, 12311,
-  12342, 12372, 12403, 12433, 12463, 12493, 12523, 12553,
-  12582, 12612, 12641, 12670, 12699, 12728, 12757, 12785,
-  12814, 12842, 12870, 12898, 12926, 12954, 12981, 13009,
-  13036, 13063, 13090, 13117, 13144, 13170, 13197, 13223,
-  13249, 13275, 13301, 13327, 13352, 13378, 13403, 13428,
-  13453, 13478, 13503, 13527, 13552, 13576, 13600, 13624,
-  13648, 13672, 13696, 13719, 13743, 13766, 13789, 13812,
-  13835, 13858, 13881, 13903, 13926, 13948, 13970, 13992,
-  14014, 14036, 14058, 14079, 14101, 14122, 14143, 14164,
-  14185, 14206, 14227, 14247, 14268, 14288, 14308, 14328,
-  14348, 14368, 14388, 14407, 14427, 14446, 14465, 14484,
-  14503, 14522, 14541, 14559, 14578, 14596, 14614, 14632,
-  14650, 14668, 14686, 14703, 14721, 14738, 14755, 14772,
-  14789, 14806, 14823, 14839, 14856, 14872, 14888, 14904,
-  14920, 14936, 14952, 14967, 14983, 14998, 15013, 15028,
-  15043, 15058, 15073, 15087, 15102, 15116, 15130, 15144,
-  15158, 15172, 15185, 15199, 15212, 15225, 15238, 15251,
-  15264, 15277, 15290, 15302, 15314, 15327, 15339, 15351,
-  15363, 15375, 15386, 15398, 15409, 15420, 15432, 15443,
-  15454, 15464, 15475, 15486, 15496, 15507, 15517, 15527,
-  15537, 15547, 15557, 15567, 15577, 15586, 15596, 15605,
-  15615, 15624, 15633, 15642, 15651, 15660, 15668, 15677,
-  15686, 15694, 15703, 15711, 15719, 15727, 15735, 15743,
-  15751, 15759, 15766, 15774, 15781, 15788, 15796, 15803,
-  15810, 15817, 15824, 15831, 15837, 15844, 15850, 15857,
-  15863, 15869, 15875, 15881, 15887, 15893, 15899, 15904,
-  15910, 15915, 15921, 15926, 15931, 15936, 15941, 15946,
-  15951, 15956, 15961, 15966, 15970, 15975, 15979, 15984,
-  15988, 15992, 15996, 16000, 16004, 16008, 16012, 16015,
-  16056, 16097, 16138, 16179, 16220, 16261, 16302, 16343,
-  16384
+     0,    924,   1307,   1602,   1850,   2069,   2267,   2450,
+  2620,   2779,   2931,   3075,   3213,   3345,   3472,   3595,
+  3715,   3830,   3942,   4052,   4159,   4263,   4364,   4464,
+  4562,   4657,   4751,   4843,   4934,   5023,   5110,   5197,
+  5282,   5365,   5448,   5529,   5610,   5689,   5767,   5845,
+  5921,   5997,   6072,   6146,   6219,   6292,   6363,   6434,
+  6505,   6574,   6643,   6712,   6780,   6847,   6914,   6980,
+  7046,   7111,   7176,   7240,   7303,   7367,   7430,   7492,
+  7554,   7615,   7676,   7737,   7798,   7858,   7917,   7976,
+  8035,   8094,   8152,   8210,   8268,   8325,   8382,   8439,
+  8495,   8551,   8607,   8662,   8718,   8773,   8827,   8882,
+  8936,   8990,   9044,   9097,   9151,   9204,   9257,   9309,
+  9362,   9414,   9466,   9518,   9569,   9621,   9672,   9723,
+  9774,   9825,   9875,   9925,   9976,  10026,  10075,  10125,
+ 10174,  10224,  10273,  10322,  10371,  10420,  10468,  10517,
+ 10565,  10613,  10661,  10709,  10757,  10804,  10852,  10899,
+ 10946,  10993,  11040,  11087,  11134,  11181,  11227,  11274,
+ 11320,  11366,  11412,  11458,  11504,  11550,  11595,  11641,
+ 11687,  11732,  11777,  11822,  11868,  11913,  11957,  12002,
+ 12047,  12092,  12136,  12181,  12225,  12270,  12314,  12358,
+ 12402,  12446,  12490,  12534,  12578,  12622,  12665,  12709,
+ 12752,  12796,  12839,  12883,  12926,  12969,  13012,  13056,
+ 13099,  13142,  13184,  13227,  13270,  13313,  13356,  13398,
+ 13441,  13484,  13526,  13568,  13611,  13653,  13696,  13738,
+ 13780,  13822,  13864,  13907,  13949,  13991,  14033,  14075,
+ 14116,  14158,  14200,  14242,  14284,  14325,  14367,  14409,
+ 14450,  14492,  14534,  14575,  14617,  14658,  14700,  14741,
+ 14782,  14824,  14865,  14907,  14948,  14989,  15030,  15072,
+ 15113,  15154,  15195,  15236,  15278,  15319,  15360,  15401,
+ 15442,  15483,  15524,  15565,  15606,  15647,  15688,  15729,
+ 15770,  15811,  15852,  15893,  15934,  15975,  16016,  16057,
+ 16098,  16139,  16179,  16220,  16261,  16302,  16343,  16384
 };
 
 /**
@@ -630,6 +607,52 @@ void multiply_Matrix3x3(int32_t mat1[3][3],int32_t mat2[3][3], int32_t result[3]
 /*
  *  example_matrix[4][5] : 4 Zeilen und 5 Spalten
  */
+
+
+/**
+ * @brief       Computes the cross product of two 3D vectors in Q15 fixed-point format.
+ *
+ * @details     This function calculates the cross product of two input vectors @p v1 and @p v2,
+ *              both represented in Q15 fixed-point format. Intermediate results are calculated
+ *              using 32-bit integers to prevent overflow and then scaled back to Q15 with rounding.
+ *
+ * @param[in]   v1     Pointer to the first vector (array of 3 Q15 values).
+ * @param[in]   v2     Pointer to the second vector (array of 3 Q15 values).
+ * @param[out]  cross  Pointer to the output vector (array of 3 Q15 values).
+ *
+ * @note        The function uses 32-bit intermediate arithmetic and rounding
+ *              with `(1 << 13)` before shifting back to Q15.
+ * @warning     Input values must be within the valid Q15 range ([-1, 1) scaled to int16_t).
+ *
+ * @see         dotproduct_3x3_Q15()
+ */
+void crossproduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *cross){
+	int32_t x;
+
+	x = (((int32_t)v1[1] * (int32_t)v2[2]) >> 1) - (((int32_t)v1[2] * (int32_t)v2[1]) >> 1);
+	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
+	cross[0] = CLAMP_INT32_TO_INT16(x);
+
+	x = (((int32_t)v1[2] * (int32_t)v2[0]) >> 1) - (((int32_t)v1[0] * (int32_t)v2[2]) >> 1);
+	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
+	cross[1] = CLAMP_INT32_TO_INT16(x);
+
+	x = (((int32_t)v1[0] * (int32_t)v2[1]) >> 1) - (((int32_t)v1[1] * (int32_t)v2[0]) >> 1);
+	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
+	cross[2] = CLAMP_INT32_TO_INT16(x);
+
+}
+
+void dotporduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *dot){
+	int32_t x;
+	x = ((int32_t)v1[0] * (int32_t)v2[0]) >> 1; // Q29
+	x += ((int32_t)v1[1] * (int32_t)v2[1]) >> 1; // Q29
+	x += ((int32_t)v1[2] * (int32_t)v2[2]) >> 1; // Q29
+
+	x = ((x + (1 << 13)) >> 14); // Q29 - Q14 = Q15
+	x = CLAMP_INT32_TO_INT16(x);
+	dot = x;
+}
 
 
 // function to start, stop the time the control need
@@ -881,12 +904,20 @@ void q_t_conj_function(int16_t *q){
 	q[2] = -q[2];
 	q[3] = -q[3];
 }
-void q_t_conj_function_in_out_q15(int16_t *q_in, int16_t *q_out){
+void q_t_conj_function_in_out_q15(const int16_t *q_in, int16_t *q_out){
 	q_out[0] = q_in[0];
 	q_out[1] = -q_in[1];
 	q_out[2] = -q_in[2];
 	q_out[3] = -q_in[3];
 }
+
+void q_t_flipp(int16_t *q){
+	q[0] = -q[0];
+	q[1] = -q[1];
+	q[2] = -q[2];
+	q[3] = -q[3];
+}
+
 
 /*
  * Matlab function:
@@ -924,32 +955,7 @@ void multiplicateQuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_
     q_out[3] = CLAMP_INT32_TO_INT16((qz + (1 << 13)) >> 14);
 }
 
-// only for differential quaternion
-void multiplicateQuaternionQ21(const int16_t *q1, const int16_t *q2, int32_t *q_out){
-    int32_t w1 = q1[0], x1 = q1[1], y1 = q1[2], z1 = q1[3];
-    int32_t w2 = q2[0], x2 = q2[1], y2 = q2[2], z2 = q2[3];
 
-    // Q29 Berechnung mit Shifts direkt nach jeder Multiplikation
-    int32_t qw = Q15_MUL_HALF(w1, w2) - Q15_MUL_HALF(x1, x2)
-               - Q15_MUL_HALF(y1, y2) - Q15_MUL_HALF(z1, z2);
-
-    int32_t qx = Q15_MUL_HALF(w1, x2) + Q15_MUL_HALF(x1, w2)
-               + Q15_MUL_HALF(y1, z2) - Q15_MUL_HALF(z1, y2);
-
-    int32_t qy = Q15_MUL_HALF(w1, y2) - Q15_MUL_HALF(x1, z2)
-               + Q15_MUL_HALF(y1, w2) + Q15_MUL_HALF(z1, x2);
-
-    int32_t qz = Q15_MUL_HALF(w1, z2) + Q15_MUL_HALF(x1, y2)
-               - Q15_MUL_HALF(y1, x2) + Q15_MUL_HALF(z1, w2);
-
-    // Q29 → Q15 (inkl. Rundung)
-
-
-    q_out[0] = CLAMP(((qw + (1 << 8)) >> 9), -Q21,Q21);
-    q_out[1] = CLAMP(((qx + (1 << 8)) >> 9), -Q21,Q21);
-    q_out[2] = CLAMP(((qy + (1 << 8)) >> 9), -Q21,Q21);
-    q_out[3] = CLAMP(((qz + (1 << 8)) >> 9), -Q21,Q21);
-}
 
 /*
  * quat_to_euler_q15(): input q and output euler[] with
@@ -988,14 +994,26 @@ void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]) {
     euler[2] = q15_atan2((int16_t)(yaw_num >> 0), (int16_t)(yaw_den >> 0));
 }
 
+void vector2quaternion_q15(const int16_t *v, int16_t *q){
+	q[0] = 0;
+	q[1] = v[0];
+	q[2] = v[1];
+	q[3] = v[2];
+}
 
+void rotate_quat_sandwich_q15(const int16_t *q1, const int16_t *v_q, const int16_t *q2, int16_t *v_q_out){
+	int16_t q_x[4];
+	multiplicateQuaternionQ15(q1,v_q,q_x);
+	multiplicateQuaternionQ15(q_x,q2,v_q_out);
+}
 
 //\#########################################################
 
 
 void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out){
 
-	int16_t v[3], theta;
+	int16_t v[3], theta_pi;
+	int32_t theta_q15;
 
 	v[0] 	= q_in[1];
 	v[1] 	= q_in[2];
@@ -1007,10 +1025,40 @@ void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out
 		ln_out[2] = 0;
 		return;
 	}
-	theta = q15_acos(q_in[0]);
-	ln_out[0] = q15_mul_2(v[0],theta);
-	ln_out[1] = q15_mul_2(v[1],theta);
-	ln_out[2] = q15_mul_2(v[2],theta);
+	theta_pi = (int16_t)q15_acos(q_in[0]); // Output Q15 -> pi
+	theta_q15 = ((int32_t)theta_pi * PI_Q13 + (1<<12)) >> 13;
+	theta_q15 = CLAMP_INT32_TO_INT16(theta_q15);
+
+	ln_out[0] = q15_mul_2(v[0],theta_q15);
+	ln_out[1] = q15_mul_2(v[1],theta_q15);
+	ln_out[2] = q15_mul_2(v[2],theta_q15);
 }
 
+void minimal_rotation(const int16_t *a, const int16_t *b, int16_t *q_out){
+	int16_t v[3], c;
+	int32_t x_i;
+	uint32_t x_u;
+
+	crossproduct_3x3_Q15(a,b,v);
+	dotporduct_3x3_Q15(a,b,&c);
+
+	if(c < -(Q15 - 20)){
+
+	}else{
+		x_u = ((uint32_t)((int32_t)c + Q15)) >> 16; // Q15^2 * 2x -> sqrt(.. ) = Q15*sqrt(2x)
+		x_u = sqrt_fast_uint(x_u);
+		x_i = CLAMP_INT32_TO_INT16((int32_t)x_u);
+		if(x_i > 5){
+			q_out[0] = x_i >> 1;
+			q_out[1] = v[0]/x_i;
+			q_out[2] = v[1]/x_i;
+			q_out[3] = v[2]/x_i;
+		}else{
+			q_out[0] = Q15;
+			q_out[1] = 0;
+			q_out[2] = 0;
+			q_out[3] = 0;
+		}
+	}
+}
 

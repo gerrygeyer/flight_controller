@@ -11,6 +11,9 @@
 
 #define SYSTEM_STOP		0
 #define SYSTEM_START 	1
+#define SYSTEM_INIT		2
+
+#define INIT_WAIT_TIME	(ATTITUDE_FREQUENCY*3) // Wait 3 sec
 
 #define TIME_PERIOD_SHORT 	500	// 5s
 #define TIME_PERIOD 		1000	// 10s

@@ -161,6 +161,9 @@ typedef struct{
 	xyz_16t mag_t;	/**< mag_xyz in Q15 representation */
 	xyz_16t gyro_t;	/**< gyro_xyz in Q15 representation */
 
+	xyz_16t gyro_drift_est;
+	xyz_16t acc_drift_est;
+
 	int16_t pitch;	/**< pitch in Q15 representation (for better visualisaton/debug) */
 	int16_t roll;	/**< pitch in Q15 representation (for better visualisaton/debug) */
 	int16_t yaw;	/**< pitch in Q15 representation (for better visualisaton/debug) */
@@ -212,6 +215,18 @@ typedef struct
 	int16_t m4; /**< Motor 4 (RPM, Iq,...)  */
 } motor_signals_16t;
 
+
+/**
+ * @brief Nonlinear attitude control P^2
+ * @note  Optionaler Hinweis zur Verwendung
+ * @see   ReferenzOderModulname
+ */
+typedef struct
+{
+	at_angl_f P1; /**< FieldDesc1 */
+	at_angl_f P2; /**< FieldDesc2 */
+
+} P2_attitude_control;
 
 
 #endif /* INC_PARAMETER_H_ */
