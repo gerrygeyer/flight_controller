@@ -16,7 +16,6 @@ static inline void divideQuaternionBy2(int16_t *q);
 static inline void multQuaternionWith2(int16_t *q);
 static inline void multQuatwithConstQ15(int16_t* q, const int16_t x);
 static inline void add2QuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_out);
-static void rotate_vector_Q15(const int16_t *q, const int16_t *v, int16_t *v_out);
 static void create_A_matrix(const int16_t *omega, const int16_t *acc_b, const int16_t *qk, int16_t *A);
 static void create_G_matrix(const int16_t *omega, const int16_t *acc_b, const int16_t *qk, int16_t *G);
 
@@ -156,21 +155,7 @@ static inline void add2QuaternionQ15(const int16_t *q1, const int16_t *q2, int16
 	q_out[3] = CLAMP_INT32_TO_INT16(q_x[3]);
 }
 
-static void rotate_vector_Q15(const int16_t *q, const int16_t *v, int16_t *v_out){
-	int16_t q_con[4], q_v[4], q_v_out[4];
 
-	q_v[0] = 0;
-	q_v[1] = v[0];
-	q_v[2] = v[1];
-	q_v[3] = v[2];
-
-	q_t_conj_function_in_out_q15(q,q_con);
-	rotate_quat_sandwich_q15(q, q_v, q_con,q_v_out);
-
-	v_out[0] = q_v_out[1];
-	v_out[1] = q_v_out[2];
-	v_out[2] = q_v_out[3];
-}
 
 /* 3x3 = quat_R(q): world<-body, q = [w,x,y,z] (Q15) */
 static void quat_R_q15(const int16_t *q, int16_t R[3][3]) {

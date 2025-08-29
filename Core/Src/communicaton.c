@@ -134,10 +134,11 @@ uint8_t send_speed_status_M1(int16_t speed, uint8_t status) {
 		TxData_M1[1] = status;
 		TxData_M1[2] = (uint8_t)(speed >> 8);
 		TxData_M1[3] = (uint8_t)(speed & 0xFF);
-
+		__disable_irq();
 		if (HAL_UART_Transmit_DMA(&huart1, TxData_M1, sizeof(TxData_M1)) != HAL_OK) {
 			return NOT_OK;
 		}
+		__enable_irq();
 //		if(HAL_UART_Receive_IT(&huart1, rx_buffer_motor1, LENGTH_RX_DATA) != HAL_OK){
 //			uint8_t test = 1;
 //		}
@@ -152,10 +153,11 @@ uint8_t send_speed_status_M2(int16_t speed, uint8_t status) {
 		TxData_M2[1] = status;
 		TxData_M2[2] = (uint8_t)(speed >> 8);
 		TxData_M2[3] = (uint8_t)(speed & 0xFF);
-
+		__disable_irq();
 		if (HAL_UART_Transmit_DMA(&huart2, TxData_M2, sizeof(TxData_M2)) != HAL_OK) {
 			return NOT_OK;
 		}
+		__enable_irq();
 	}
     return OK;
 }
@@ -168,10 +170,11 @@ uint8_t send_speed_status_M3(int16_t speed, uint8_t status) {
 		TxData_M3[1] = status;
 		TxData_M3[2] = (uint8_t)(speed >> 8);
 		TxData_M3[3] = (uint8_t)(speed & 0xFF);
-
+		__disable_irq();
 		if (HAL_UART_Transmit_DMA(&huart3, TxData_M3, sizeof(TxData_M3)) != HAL_OK) {
 			return NOT_OK;
 		}
+		__enable_irq();
 	}
     return OK;
 
@@ -184,10 +187,11 @@ uint8_t send_speed_status_M4(int16_t speed, uint8_t status) {
 		TxData_M4[1] = status;
 		TxData_M4[2] = (uint8_t)(speed >> 8);
 		TxData_M4[3] = (uint8_t)(speed & 0xFF);
-
+		__disable_irq();
 		if (HAL_UART_Transmit_DMA(&huart6, TxData_M4, sizeof(TxData_M4)) != HAL_OK) {
 			return NOT_OK;
 		}
+		__enable_irq();
 	}
     return OK;
 }

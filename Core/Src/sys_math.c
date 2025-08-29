@@ -7,9 +7,13 @@
 
 #include <sys_math.h>
 #include <main.h>
+#include <stdlib.h>
 #include <stdbool.h>
 //#include "arm_math.h"
 uint32_t time;
+
+
+
 
 
 void multiply_matrix_with_scalar(float scalar, float in_matrix[4][4], float out_matrix[4][4]) {
@@ -290,34 +294,6 @@ int16_t cos_i(int16_t y){
 	return sin_i(y + INT16_HALF_VALUE);
 }
 
-/*
- * kein beispiel bitte
- *% Anzahl der LUT-Einträge
-N = 256;
-
-% Skalierung: asin ∈ [0, pi/2] → [0, 32767]
-SCALE_ASIN = 32767 / (pi/2);  % ≈ 20860.75
-
-% Eingangsbereich: x ∈ [0, 1]
-x = linspace(0, 1, N);
-y = asin(x);  % rad
-
-% Ausgabe skalieren auf int16_t Bereich
-y_q15 = round(y * SCALE_ASIN);  % jetzt ∈ [0, 32767]
-
-% Ausgabe als C-Array
-fprintf('const int16_t asin_q15_lut[%d] = {\n', N);
-for i = 1:N
-    fprintf('%6d', y_q15(i));
-    if i < N
-        fprintf(', ');
-    end
-    if mod(i, 8) == 0
-        fprintf('\n');
-    end
-end
-fprintf('\n};\n');
- */
 
 /**
  * @brief       Lookup table for arcsine function (asin) in Q15 format.
@@ -630,15 +606,15 @@ void crossproduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *cross){
 	int32_t x;
 
 	x = (((int32_t)v1[1] * (int32_t)v2[2]) >> 1) - (((int32_t)v1[2] * (int32_t)v2[1]) >> 1);
-	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
+	x = Q14_SHIFT_ROUND(x); // back to Q15
 	cross[0] = CLAMP_INT32_TO_INT16(x);
 
 	x = (((int32_t)v1[2] * (int32_t)v2[0]) >> 1) - (((int32_t)v1[0] * (int32_t)v2[2]) >> 1);
-	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
+	x = Q14_SHIFT_ROUND(x); // back to Q15
 	cross[1] = CLAMP_INT32_TO_INT16(x);
 
 	x = (((int32_t)v1[0] * (int32_t)v2[1]) >> 1) - (((int32_t)v1[1] * (int32_t)v2[0]) >> 1);
-	x = ((x + ( 1 << 13 )) >> 14); // back to Q15
+	x = Q14_SHIFT_ROUND(x); // back to Q15
 	cross[2] = CLAMP_INT32_TO_INT16(x);
 
 }
@@ -649,9 +625,9 @@ void dotporduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *dot){
 	x += ((int32_t)v1[1] * (int32_t)v2[1]) >> 1; // Q29
 	x += ((int32_t)v1[2] * (int32_t)v2[2]) >> 1; // Q29
 
-	x = ((x + (1 << 13)) >> 14); // Q29 - Q14 = Q15
+	x = Q14_SHIFT_ROUND(x); // Q29 - Q14 = Q15
 	x = CLAMP_INT32_TO_INT16(x);
-	dot = x;
+	dot[0] = x;
 }
 
 
@@ -707,7 +683,7 @@ uint32_t sqrt_fast_uint(uint32_t n) {
  *              Result is clamped implicitly by casting to int16_t.
  */
 static inline int16_t q15_mul(int16_t a, int16_t b) {
-    return (int16_t)(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
+    return CLAMP_INT32_TO_INT16((Q15_SHIFT_ROUND((int32_t)a * b))); // mit Rundung
 }
 
 /**
@@ -724,8 +700,7 @@ static inline int16_t q15_mul(int16_t a, int16_t b) {
  * @note        Rounding is applied before shifting: adds \f$ 2^{13} \f$ before right-shift by 14.
  */
 static inline int16_t q15_mul_2(int16_t a, int16_t b) {
-	int32_t x = (((int32_t)a * b + (1 << 13)) >> 14);
-    return CLAMP_INT32_TO_INT16(x);
+	return CLAMP_INT32_TO_INT16((Q14_SHIFT_ROUND((int32_t)a * b))); // mit Rundung
 }
 
 void norm_2d_vector_q15(int16_t *v){
@@ -779,22 +754,7 @@ void norm_3d_vector(int16_t *input, int16_t *norm_out){
 
 // ########### QUATERNION MATH ############
 
-/**
- * @brief       Multiplies two Q15 values and right-shifts the result by 1.
- *
- * @details     Performs a 16-bit × 16-bit multiplication with 32-bit intermediate result.
- *              The result is not scaled back to Q15 (i.e., no >>15 shift), but only shifted
- *              by 1 bit, typically used for special cases like symmetric expressions
- *              or energy/power terms.
- *
- * @param       a       First operand in Q15 format (int16_t).
- * @param       b       Second operand in Q15 format (int16_t).
- *
- * @return      31-bit result (int32_t), effectively: \f$ \frac{a \cdot b}{2} \f$
- *
- * @note        No rounding is applied. Use when half-scale product is intended.
- */
-#define Q15_MUL_HALF(a, b) (((int32_t)(a) * (int32_t)(b)) >> 1)
+
 
 void NormalizeQuaternionQ15(const int16_t *q, int16_t *q_out) {
 	uint32_t minimal_mag_value = 2;
@@ -948,11 +908,11 @@ void multiplicateQuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_
     int32_t qz = Q15_MUL_HALF(w1, z2) + Q15_MUL_HALF(x1, y2)
                - Q15_MUL_HALF(y1, x2) + Q15_MUL_HALF(z1, w2);
 
-    // Q29 → Q15 (inkl. Rundung)
-    q_out[0] = CLAMP_INT32_TO_INT16((qw + (1 << 13)) >> 14);
-    q_out[1] = CLAMP_INT32_TO_INT16((qx + (1 << 13)) >> 14);
-    q_out[2] = CLAMP_INT32_TO_INT16((qy + (1 << 13)) >> 14);
-    q_out[3] = CLAMP_INT32_TO_INT16((qz + (1 << 13)) >> 14);
+    // Q29 → Q15
+    q_out[0] = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(qw));
+    q_out[1] = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(qx));
+    q_out[2] = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(qy));
+    q_out[3] = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(qz));
 }
 
 
@@ -1005,6 +965,22 @@ void rotate_quat_sandwich_q15(const int16_t *q1, const int16_t *v_q, const int16
 	int16_t q_x[4];
 	multiplicateQuaternionQ15(q1,v_q,q_x);
 	multiplicateQuaternionQ15(q_x,q2,v_q_out);
+}
+
+void rotate_vector_Q15(const int16_t *q, const int16_t *v, int16_t *v_out){
+	int16_t q_con[4], q_v[4], q_v_out[4];
+
+	q_v[0] = 0;
+	q_v[1] = v[0];
+	q_v[2] = v[1];
+	q_v[3] = v[2];
+
+	q_t_conj_function_in_out_q15(q,q_con);
+	rotate_quat_sandwich_q15(q, q_v, q_con,q_v_out);
+
+	v_out[0] = q_v_out[1];
+	v_out[1] = q_v_out[2];
+	v_out[2] = q_v_out[3];
 }
 
 //\#########################################################
@@ -1060,5 +1036,34 @@ void minimal_rotation(const int16_t *a, const int16_t *b, int16_t *q_out){
 			q_out[3] = 0;
 		}
 	}
+}
+
+void nLERP_quaternion_Q15(const int16_t *q1, const int16_t *q2, const int16_t beta, int16_t *q_out){
+	int16_t s, q_1[4];
+	int32_t x;
+
+	dotporduct_3x3_Q15(&q1[1], &q2[1], &s);
+	if(s<0){
+		q_1[0] = -q1[0];
+		q_1[1] = -q1[1];
+		q_1[2] = -q1[2];
+		q_1[3] = -q1[3];
+	}else{
+		q_1[0] = q1[0];
+		q_1[1] = q1[1];
+		q_1[2] = q1[2];
+		q_1[3] = q1[3];
+	}
+
+	x = Q15_SHIFT_ROUND((int32_t)q_1[0] * ((int32_t)Q15 - (int32_t)beta))+ Q15_SHIFT_ROUND((int32_t)q2[0] * (int32_t)beta);
+	q_out[0] = CLAMP_INT32_TO_INT16(x);
+	x = Q15_SHIFT_ROUND((int32_t)q_1[1] * ((int32_t)Q15 - (int32_t)beta))+ Q15_SHIFT_ROUND((int32_t)q2[1] * (int32_t)beta);
+	q_out[1] = CLAMP_INT32_TO_INT16(x);
+	x = Q15_SHIFT_ROUND((int32_t)q_1[2] * ((int32_t)Q15 - (int32_t)beta))+ Q15_SHIFT_ROUND((int32_t)q2[2] * (int32_t)beta);
+	q_out[2] = CLAMP_INT32_TO_INT16(x);
+	x = Q15_SHIFT_ROUND((int32_t)q_1[3] * ((int32_t)Q15 - (int32_t)beta))+ Q15_SHIFT_ROUND((int32_t)q2[3] * (int32_t)beta);
+	q_out[3] = CLAMP_INT32_TO_INT16(x);
+
+	NormalizeQuaternionQ15(q_out, q_out);
 }
 

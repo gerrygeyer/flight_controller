@@ -95,6 +95,7 @@ int16_t debug_x_err_1, debug_x_err_2,debug_x_err_3,debug_x_err_4,debug_x_err_5,d
 int16_t debug_diff_err1, debug_diff_err2, debug_diff_err3, debug_diff_err4;
 wxyz_16t debug_q_err, debug_q_err_old;
 int16_t debug_u_lqr1, debug_u_lqr2,debug_u_lqr3;
+int16_t debug_gyro_x, debug_gyro_y,debug_gyro_z;
 
 
 void init_attitude_control(void){
@@ -115,14 +116,14 @@ void init_attitude_control(void){
 
 //	drone_parameter.Jz_y_div_x = drone_parameter.Jzz - drone_parameter.Jyy
 
-	gain.P1.pitch = 20;
-	gain.P1.roll = 20;
-	gain.P1.yaw = 3;
+	gain.P1.pitch = 4.5f;
+	gain.P1.roll = 4.5f;
+	gain.P1.yaw = 0.2f;
 
 
-	gain.P2.pitch = 4;
-	gain.P2.roll = 4;
-	gain.P2.yaw = 10;
+	gain.P2.pitch = 0.05;
+	gain.P2.roll = 0.05;
+	gain.P2.yaw = 0.01;
 
 
 }
@@ -147,10 +148,10 @@ void run_attitude_control(motor_t *pHandle_motor, at_control_f *pHandle_control)
 void transform_u2_motorSpeed(const int16_t *u, motor_t *pHandle_motor){
 	float u_f[4][1], w_2[4][1];
 
-	u_f[0][0] = 6.7f;//(float)u[0]/(float)Q15;
-	u_f[1][0] = (float)u[1]/(float)Q15;
-	u_f[2][0] = (float)u[2]/(float)Q15;
-	u_f[3][0] = (float)u[3]/(float)Q15;
+	u_f[0][0] = 10.5f;//(float)u[0]/(float)Q15;
+	u_f[1][0] = (float)u[1]/(float)Q10;
+	u_f[2][0] = (float)u[2]/(float)Q10;
+	u_f[3][0] = (float)u[3]/(float)Q10;
 
 	debug_u_f1 = u_f[0][0];
 	debug_u_f2 = u_f[1][0];
@@ -180,25 +181,29 @@ void generate_RPM_commands(float w[4][1], motor_t *pHandle_motor){
  	x = (x<0)? -sqrt(-x): sqrt(x);
 	x = (x < -MAX_SPEED_MOTOR_RPM)? -MAX_SPEED_MOTOR_RPM:x;
 	x = (x > MAX_SPEED_MOTOR_RPM)? MAX_SPEED_MOTOR_RPM:x;
-	pHandle_motor->m_1 = x;
+//	pHandle_motor->m_1 = x;
+	pHandle_motor->m_4 = x;
 
 	x = (int32_t)(w[1][0] * (float)E6) * RAD_TO_RPM * RAD_TO_RPM;
 	x = (x<0)? -sqrt(-x): sqrt(x);
 	x = (x < -MAX_SPEED_MOTOR_RPM)? -MAX_SPEED_MOTOR_RPM:x;
 	x = (x > MAX_SPEED_MOTOR_RPM)? MAX_SPEED_MOTOR_RPM:x;
-	pHandle_motor->m_2 = -x;
+//	pHandle_motor->m_2 = -x;
+	pHandle_motor->m_3 = x;
 
 	x = (int32_t)(w[2][0] * (float)E6 * RAD_TO_RPM * RAD_TO_RPM);
 	x = (x<0)? -sqrt(-x): sqrt(x);
 	x = (x < -MAX_SPEED_MOTOR_RPM)? -MAX_SPEED_MOTOR_RPM:x;
 	x = (x > MAX_SPEED_MOTOR_RPM)? MAX_SPEED_MOTOR_RPM:x;
-	pHandle_motor->m_3 = x;
+//	pHandle_motor->m_3 = x;
+	pHandle_motor->m_2 = -x;
 
 	x = (int32_t)(w[3][0] * (float)E6 * RAD_TO_RPM * RAD_TO_RPM);
 	x = (x<0)? -sqrt(-x): sqrt(x);
 	x = (x < -MAX_SPEED_MOTOR_RPM)? -MAX_SPEED_MOTOR_RPM:x;
 	x = (x > MAX_SPEED_MOTOR_RPM)? MAX_SPEED_MOTOR_RPM:x;
-	pHandle_motor->m_4 = -x;
+//	pHandle_motor->m_4 = -x;
+	pHandle_motor->m_1 = x;
 }
 
 void generate_u_vector(control_output_f in, float u_out[4][1]){
@@ -424,12 +429,26 @@ q_count = 0;
 
 
 
-const int16_t K_q10[3][6] = {
-    {25679,     0,     0, 16537,     0,     0},
-    {    0, 25679,     0,     0, 16537,     0},
-    {    0,     0, 25679,     0,     0, 16537}
-};
+//const int16_t K_q10[3][6] = {
+//    {25679,     0,     0, 16537,     0,     0},
+//    {    0, 25679,     0,     0, 16537,     0},
+//    {    0,     0, 25679,     0,     0, 16537}
+//};
 
+/*
+ * K =
+
+    7.7460    0.0000    0.0000   23.4270   -0.0000   -0.0000
+    0.0000    7.7460   -0.0000    0.0000   12.1994    0.0000
+   -0.0000    0.0000    3.6515   -0.0000    0.0000   14.3980
+
+>>
+ */
+const int16_t K_q10[3][6] = {
+    {24919,     0,     0,  23989,     0,     0},
+    {    0, 24919,     0,     0, 12492,     0},
+    {    0,     0, 11747,     0,     0, 14744}
+};
 
 //const int16_t J = [0.012273 0         0;
 //0         0.012526 0;
@@ -608,31 +627,37 @@ void set_init_yaw_position(const int16_t *q, int16_t *q_yaw_corr, int16_t *q_axi
 
 }
 
-void correct_q_axis(const int16_t *q_yaw_corr,const int16_t *q_axis_corr, int16_t *q, int16_t *w){
-	if(correction_ready){
-		int16_t q_out[4],q_B_con[4], w_q[4];
-		rotate_quat_sandwich_q15(q_yaw_corr,q,q_axis_corr,q_out);
+void correct_q_axis(int16_t *q, int16_t *w){
+	static int16_t q_axis_rot[4] = {SQRT_2_OVER_2_Q15,0,0,-SQRT_2_OVER_2_Q15};
 
-		q[0] = q_out[0];
-		q[1] = q_out[1];
-		q[2] = q_out[2];
-		q[3] = q_out[3];
+		multiplicateQuaternionQ15(q, q_axis_rot, q);
+		multiplicateQuaternionQ15(q, q_axis_rot, q);
+		rotate_vector_Q15(q_axis_rot, w, w);
+		rotate_vector_Q15(q_axis_rot, w, w);
+		NormalizeQuaternionQ15(q, q);
 
-		w_q[0] = 0;
-		w_q[1] = w[0];
-		w_q[2] = w[1];
-		w_q[3] = w[2];
-		q_t_conj_function_in_out_q15(q_axis_corr, q_B_con);
-		rotate_quat_sandwich_q15(q_B_con, w_q, q_axis_corr, w_q);
-		w[0] = w_q[1];
-		w[1] = w_q[2];
-		w[2] = w_q[3];
-	}
 }
 
+static void iir_filter_gyro(const int16_t *gyro_raw, int16_t *gyro_filter){
+	static int16_t a = (int16_t)(0.1116f * (float)Q15);
+	static int32_t gyro_last_value[3] = {0};
+
+	gyro_last_value[0] = (((int32_t)a * (int32_t)gyro_raw[0]) >> 15) + ((((int32_t)Q15 - a)*(int32_t)gyro_last_value[0]) >> 15);
+	gyro_last_value[1] = (((int32_t)a * (int32_t)gyro_raw[1]) >> 15) + ((((int32_t)Q15 - a)*(int32_t)gyro_last_value[1]) >> 15);
+	gyro_last_value[2] = (((int32_t)a * (int32_t)gyro_raw[2]) >> 15) + ((((int32_t)Q15 - a)*(int32_t)gyro_last_value[2]) >> 15);
+
+	gyro_last_value[0] = CLAMP_INT32_TO_INT16(gyro_last_value[0]);
+	gyro_last_value[1] = CLAMP_INT32_TO_INT16(gyro_last_value[1]);
+	gyro_last_value[2] = CLAMP_INT32_TO_INT16(gyro_last_value[2]);
+
+	gyro_filter[0] = gyro_last_value[0];
+	gyro_filter[1] = gyro_last_value[1];
+	gyro_filter[2] = gyro_last_value[2];
+
+}
 
 void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q_ref, const int16_t *w_gyro_t, int16_t *tau){
-	int16_t q_reff[4], q_con[4], q_err[4];
+	int16_t q_reff[4], q_con[4], q_err[4], gyro_filter[3];
 	int32_t out[3];
 
 	copy_q(q_ref,q_reff);
@@ -641,13 +666,19 @@ void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q
 	q_t_flipp(q_reff);
 	multiplicateQuaternionQ15(q_reff, q_con, q_err);
 
-	out[0] = -q_err[1] * (int16_t)(gain.P1.pitch);
-	out[1] = -q_err[2] * (int16_t)(gain.P1.roll);
-	out[2] = -q_err[3] * (int16_t)(gain.P1.yaw);
+	iir_filter_gyro(w_gyro_t,gyro_filter);
 
-	out[0] = -w_gyro_t[1] * (int16_t)(gain.P2.pitch * 34.9f);
-	out[1] = -w_gyro_t[2] * (int16_t)(gain.P2.roll * 34.9f);
-	out[2] = -w_gyro_t[3] * (int16_t)(gain.P2.yaw * 34.9f);
+	debug_gyro_x = gyro_filter[0];
+	debug_gyro_y = gyro_filter[1];
+	debug_gyro_z = gyro_filter[2];
+
+	out[0] = -q15_mul(q_err[1], (int16_t)(gain.P1.pitch * (float)Q10));
+	out[1] = -q15_mul(q_err[2],(int16_t)(gain.P1.roll * (float)Q10));
+	out[2] = -q15_mul(q_err[3],(int16_t)(gain.P1.yaw * (float)Q10));
+
+	out[0] -= w_gyro_t[0] * (int16_t)(gain.P2.pitch * 34.9f);
+	out[1] -= w_gyro_t[1] * (int16_t)(gain.P2.roll * 34.9f);
+	out[2] -= w_gyro_t[2] * (int16_t)(gain.P2.yaw * 34.9f);
 
 	tau[0] = CLAMP_INT32_TO_INT16(out[0]);
 	tau[1] = CLAMP_INT32_TO_INT16(out[1]);

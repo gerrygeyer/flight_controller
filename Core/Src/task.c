@@ -23,7 +23,8 @@ motor_t motor;
 at_control_f attitude_control_signals;
 // used for Test function
 uint32_t control_signals_counter;
-uint8_t control_flag;
+uint8_t control_flag, stop_flag;
+
 
 
 wxyz_16t system_q;
@@ -33,7 +34,8 @@ motor_signals_16t motor_seed_esc;
 
 // debug
 int16_t debug_tau_1, debug_tau_2, debug_tau_3;
-uint8_t debug_speed_counter = 0;
+int16_t debug_speed_counter = 0;
+xyz_16t debug_w;
 float euler_debug_ax_roll, euler_debug_ax_pitch,euler_debug_ax_yaw;
 
 static void highspeed_task(void);
@@ -41,8 +43,8 @@ static void highspeed_task(void);
 void task_init(void){
 
 //	system_state = SYSTEM_INIT;
-	system_state = SYSTEM_START;
-//	system_state = SYSTEM_STOP;
+//	system_state = SYSTEM_START;
+	system_state = SYSTEM_STOP;
 
 	q_yaw_correction[0] = Q15;
 	q_yaw_correction[1] = 0;
@@ -71,11 +73,8 @@ void task_init(void){
 
 	control_signals_counter = 0;
 	control_flag = OFF;
+	stop_flag = OFF;
 
-	// test
-//	int16_t q[4] = { 17106, 13889, -20718, 12608};
-//	int16_t q_ref[4] = {3407, -28792, 14806, 3734};
-//	int16_t tau[3];
 
 
 }
@@ -108,12 +107,17 @@ static void highspeed_task(void){
 	int16_t q[4], w[3],q_att_ref[4];
 	int16_t tau[3], u[4];
 	float u_f[4][1], w_f[4][1];
+	static int32_t ramp_speed = 0;
 	// debug
 	int16_t euler[3];
 
 
 	get_quaternion_Q15(q, w);
-//	correct_q_axis(q_yaw_correction,q_axis_correction,q,w);
+
+	debug_w.x = w[0];
+	debug_w.y = w[1];
+	debug_w.z = w[2];
+//	correct_q_axis(q,w);
 
 	quat_to_euler_q15(q, euler);
 	euler_debug_ax_roll = (float)euler[0];//* 360.0f / (float)INT16_MAX;
@@ -129,37 +133,54 @@ static void highspeed_task(void){
 
 	case SYSTEM_INIT:
 		static uint16_t init_state_counter = 0;
+		static uint8_t offset_imu = 0;
 
-//		if(init_state_counter++ > INIT_WAIT_TIME){
-//			set_init_yaw_position(q,q_yaw_correction,q_axis_correction);
-//			system_state = SYSTEM_STOP;
-//			init_state_counter = 0;
-//		}
-
-//		if(init_state_counter > Q15){ // safty function
-//			set_init_yaw_position(q,q_yaw_correction,q_axis_correction);
-//			system_state = SYSTEM_STOP;
-//			init_state_counter = 0;
-//		}
+		if(offset_imu == 0){
+			offset_imu = calculate_offset_values_imu();
+		}
+		ramp_speed = 0;
+		stop_flag = OFF;
 		break;
 
 	case SYSTEM_STOP:
 
-//		debug_speed_counter++;
-//		motor.m_1 = debug_speed_counter;
-//		motor.m_2 = debug_speed_counter;
-//		motor.m_3 = debug_speed_counter;
-//		motor.m_4 = debug_speed_counter;
+		if(stop_flag == OFF){
+			stop_flag = ON;
 
-		motor.m_1 = 0;
-		motor.m_2 = 0;
-		motor.m_3 = 0;
-		motor.m_4 = 0;
+			motor.m_1 = 0;
+			motor.m_2 = 0;
+			motor.m_3 = 0;
+			motor.m_4 = 0;
 
-		motor.state_m_1 = MOTOR_STOPP;
-		motor.state_m_2 = MOTOR_STOPP;
-		motor.state_m_3 = MOTOR_STOPP;
-		motor.state_m_4 = MOTOR_STOPP;
+			motor.state_m_1 = MOTOR_STOPP;
+			motor.state_m_2 = MOTOR_STOPP;
+			motor.state_m_3 = MOTOR_STOPP;
+			motor.state_m_4 = MOTOR_STOPP;
+
+			// send the speed command to M1 - M4
+			if(run_motors(&motor) != OK){
+				// error
+			}
+		}
+
+		clear_control_functions();
+		ramp_speed = 0;
+
+	break;
+	case SYSTEM_RAMP:
+		stop_flag = OFF;
+
+
+
+		motor.m_1 = ramp_speed;
+		motor.m_2 = -ramp_speed;
+		motor.m_3 = ramp_speed;
+		motor.m_4 = ramp_speed;
+
+		motor.state_m_1 = MOTOR_START;
+		motor.state_m_2 = MOTOR_START;
+		motor.state_m_3 = MOTOR_START;
+		motor.state_m_4 = MOTOR_START;
 
 		// send the speed command to M1 - M4
 		if(run_motors(&motor) != OK){
@@ -168,8 +189,15 @@ static void highspeed_task(void){
 
 		clear_control_functions();
 
+		if(ramp_speed < 3000){
+			ramp_speed += 6;
+		}else{
+			system_state = SYSTEM_START;
+		}
+
 	break;
 	case SYSTEM_START:
+		stop_flag = OFF;
 		read_distance_sensor();
 		read_orientation();
 
@@ -197,15 +225,19 @@ static void highspeed_task(void){
 //		q_att_ref[1] = (int16_t)(-15570);
 //		q_att_ref[2] = (int16_t)(12978);
 //		q_att_ref[3] = (int16_t)(21780);
+
+		switch (ATTITUDE_CONTROL){
+		case ATT_LQR_CONTROL:
+			attitude_control_quaternion_lqr_q15(q,q_att_ref,w,tau); // kontrolliert
+			break;
+		case ATT_P2_CONTROL:
+			attitude_control_quaternion_nonlinear_q15(q,q_att_ref,w,tau);
+			break;
+		default:
+			system_state = SYSTEM_STOP;
+		}
 //
-//		q[0] = (int16_t)(8116);
-//		q[1] = (int16_t)(3641);
-//		q[2] = (int16_t)(18167);
-//		q[3] = (int16_t)(25779);
 
-
-
-		attitude_control_quaternion_lqr_q15(q,q_att_ref,w,tau); // kontrolliert
 
 		debug_tau_1 = tau[0]; // debug
 		debug_tau_2 = tau[1];	// debug
@@ -217,7 +249,18 @@ static void highspeed_task(void){
 		u[3] = tau[2];
 
 
+
+
 		transform_u2_motorSpeed(u,&motor);
+
+
+//		debug_speed_counter++;
+//		if(debug_speed_counter > 10000) debug_speed_counter = -10000;
+//		motor.m_1 = debug_speed_counter;
+//		motor.m_2 = debug_speed_counter;
+//		motor.m_3 = debug_speed_counter;
+//		motor.m_4 = debug_speed_counter;
+
 
 
 		motor.state_m_1 = MOTOR_START;
@@ -229,8 +272,11 @@ static void highspeed_task(void){
 		if(run_motors(&motor) != OK){
 			// error
 		}
+		ramp_speed = 0;
 	break;
 	default: // equal to SYSTEM_STOP (redundant)
+		stop_flag = OFF;
+
 		motor.m_1 = 0;
 		motor.m_2 = 0;
 		motor.m_3 = 0;
@@ -246,6 +292,7 @@ static void highspeed_task(void){
 			// error
 		}
 		clear_control_functions();
+		ramp_speed = 0;
 	break;
 	}
 

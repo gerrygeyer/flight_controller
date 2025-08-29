@@ -25,6 +25,22 @@
 #define LQR 		0x01
 #define PID			0x02
 
+#define STEP_FUNCTION		0
+#define RAMP_FUNCTION		1
+#define UP_DOWN_FUNCTION	2
+
+#define ATT_LQR_CONTROL		1
+#define ATT_P2_CONTROL		2
+
+#define SF_MADGWICK			0
+#define SF_COMPLEMENTARY	1
+#define SF_EKF				2
+
+#define ACC_ON				1
+#define ACC_OFF				0
+#define MAG_ON				1
+#define MAG_OFF				0
+
 #define SET_IMU_OFFSET		OK
 #define SYSTEM_FREQUENCY	100 // Hz
 #define SYSTEM_TS			(float)(1.0f/(float)SYSTEM_FREQUENCY)

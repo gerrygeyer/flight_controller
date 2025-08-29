@@ -28,9 +28,11 @@
 
 #define PI_Q13				25736
 #define PI_OVER_2_Q15		16384
+#define SQRT_2_OVER_2_Q15	23170
 #define RPM_TO_RAD_Q15		3432
 #define RAD2RPM_2_Q8 		23344 // (60(2pi)^2 = 91.18...-> 91.18*Q8
 #define RADQ5_TO_RPMQ13_Q15	1222 // //(60/(2*pi)) * (2^5)/((2^13))
+
 
 
 #define Q1					2
@@ -51,7 +53,46 @@
 #define Q30					1073741824
 
 
+/**
+ * @brief       Multiplies two Q15 values and right-shifts the result by 1.
+ *
+ * @details     Performs a 16-bit × 16-bit multiplication with 32-bit intermediate result.
+ *              The result is not scaled back to Q15 (i.e., no >>15 shift), but only shifted
+ *              by 1 bit, typically used for special cases like symmetric expressions
+ *              or energy/power terms.
+ *
+ * @param       a       First operand in Q15 format (int16_t).
+ * @param       b       Second operand in Q15 format (int16_t).
+ *
+ * @return      31-bit result (int32_t), effectively: \f$ \frac{a \cdot b}{2} \f$
+ *
+ * @note        No rounding is applied. Use when half-scale product is intended.
+ */
+#define Q15_MUL_HALF(a, b) (((int32_t)(a) * (int32_t)(b)) >> 1)
 
+/**
+ * @brief   Q15 rounding right-shift with sign-dependent bias.
+ *
+ * This macro performs a fixed-point rounding operation when shifting
+ * a 32-bit integer value down by 15 bits (Q15 scaling).
+ *
+ * The rounding offset (1 << 14) is added or subtracted depending
+ * on the sign of the input value, ensuring correct rounding for
+ * both positive and negative numbers.
+ *
+ * Formula:
+ *   result = (x + (x >= 0 ? +16384 : -16384)) >> 15
+ *
+ * - For positive values: adds +16384 before shifting → rounds up.
+ * - For negative values: adds -16384 before shifting → rounds down.
+ *
+ * @param x  Input value in int32_t to be rounded and shifted.
+ * @return   int32_t Rounded result of (x / 32768) with sign-aware rounding.
+ *
+ * @note This is a "round to nearest, tie away from zero" implementation.
+ */
+#define Q15_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 14) : -(1 << 14))) >> 15)
+#define Q14_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 13) : -(1 << 13))) >> 14)
 
 /**
  * @brief       Converts motor speed from RPM to angular velocity in rad/s (Q15 scaled).
@@ -462,7 +503,11 @@ void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out
 
 
 void rotate_quat_sandwich_q15(const int16_t *q1, const int16_t *v_q, const int16_t *q2, int16_t *v_q_out);
+void rotate_vector_Q15(const int16_t *q, const int16_t *v, int16_t *v_out);
 void vector2quaternion_q15(const int16_t *v, int16_t *q);
+
+
+void nLERP_quaternion_Q15(const int16_t *q1, const int16_t *q2, const int16_t beta, int16_t *q_out);
 /** @} */  // end of QuaternionMathQ15 group
 
 

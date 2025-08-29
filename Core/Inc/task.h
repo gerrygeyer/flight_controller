@@ -10,8 +10,9 @@
 #include <parameter.h>
 
 #define SYSTEM_STOP		0
-#define SYSTEM_START 	1
-#define SYSTEM_INIT		2
+#define SYSTEM_START 	2
+#define SYSTEM_INIT		3
+#define SYSTEM_RAMP		1
 
 #define INIT_WAIT_TIME	(ATTITUDE_FREQUENCY*3) // Wait 3 sec
 
