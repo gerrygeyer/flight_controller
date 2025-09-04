@@ -18,6 +18,19 @@ static inline void multQuatwithConstQ15(int16_t* q, const int16_t x);
 static inline void add2QuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_out);
 static void create_A_matrix(const int16_t *omega, const int16_t *acc_b, const int16_t *qk, int16_t *A);
 static void create_G_matrix(const int16_t *omega, const int16_t *acc_b, const int16_t *qk, int16_t *G);
+static void create_Qc_matrix(float sigma_g,   // gyro noise [rad/s/√Hz]
+                      float sigma_a,   // accel noise [m/s²/√Hz]
+                      float sigma_bg,  // gyro bias RW [rad/s/√s]
+                      float sigma_ba,  // accel bias RW [m/s²/√s]
+                      int16_t Qc[12][12]);
+static void accumulate_Phi_blocks_q15(const int16_t *A, int16_t *Phi, int16_t dt_gyro_eff, int16_t dt_acc_eff, int16_t dt_q15);
+static inline int16_t float_to_q15(float x);
+static inline int16_t q15_from_float(float x);
+static inline int16_t dt_gyro_eff_q15(float dt_s);
+static inline int16_t dt_acc_eff_q15(float dt_s, float vel_q15_per_mps);
+void compute_Qd_q15(const int16_t G[15][12], const int16_t Qc[12][12], int16_t dt_q15, int shift, int16_t Qd_out[15][15]);
+void update_P_q15(const int16_t Phi[15][15], const int16_t P_in[15][15], const int16_t Qd[15][15], int shift, int16_t P_out[15][15]);
+
 
 void init_EKF(void){
 
@@ -32,11 +45,12 @@ void execute_EKF_Fast_Q15(sensor_fusion *pHandle_sf, int16_t *p_out){
 	static int16_t vk[3] = {0,0,0};
 	static int16_t pk[3] = {0,0,0};
 	static int16_t Qc[12][12];
+	static int16_t dt_q15,dtw_q15,dta_q15;
 
 	static bool ekf_init = 0;
 
-	int16_t accel[3], gyro[3], q_gyro[4], q_gyro_dot[4], q_accel[4], acc_w[3];
-	int16_t A[16][16], G[15][12];
+	int16_t accel[3],accel_norm[3], gyro[3], q_gyro[4], q_gyro_dot[4], q_accel[4], acc_w[3];
+	int16_t A[16][16], Phi[15][15], G[15][12],Qd[15][15],P[15][15];
 
 	float sigma_g = 0.03;
 	float sigma_a = 0.25;
@@ -45,6 +59,12 @@ void execute_EKF_Fast_Q15(sensor_fusion *pHandle_sf, int16_t *p_out){
 
 	if(ekf_init == 0){
 		create_Qc_matrix(sigma_g, sigma_a,sigma_bg,sigma_ba, Qc);
+
+		float dt_s = 0.001; //sec -> 1000 Hz
+
+		dt_q15      = q15_from_float(dt_s);
+		dtw_q15     = dt_gyro_eff_q15(dt_s);               // dt * 34.9
+		dta_q15     = dt_acc_eff_q15(dt_s, Q15);       // dt * 16g / v_scale
 	}
 
 
@@ -103,6 +123,22 @@ void execute_EKF_Fast_Q15(sensor_fusion *pHandle_sf, int16_t *p_out){
 	// ---- Linearized error dynamics: x_err = [dth; dv; dp; dbg; dba]
 	create_A_matrix(gyro,accel, q_k, &A[0][0]);
 	create_G_matrix(gyro,accel, q_k, &G[0][0]);
+
+	accumulate_Phi_blocks_q15(&A[0][0], &Phi[0][0], dtw_q15, dta_q15, dt_q15);
+
+	int shift_qd = 1;   // Headroom für Qd
+	int shift_p  = 1;   // Headroom im P-Update
+
+	compute_Qd_q15(G, Qc, dt_q15, shift_qd, Qd);
+	update_P_q15(Phi, P, Qd, shift_p, P);
+
+	// ########## UPDATE #################
+	int16_t acc_norm = norm_of_3D_vector(accel);
+	if((acc_norm > 16384) && (acc_norm < 24.576)){ // > 0.8 * g && < 1.2 * g
+		norm_3d_vector(accel, accel_norm);
+
+	}
+
 
 
 
@@ -221,7 +257,7 @@ static void mat3_mul_q15(const int16_t A[3][3], const int16_t B[3][3], int16_t C
             for (int k=0;k<3;k++) {
                 acc += ((int32_t)A[i][k] * (int32_t)B[k][j]) >> 2; // Q28
             }
-            acc = (acc + (1 << 12)) >> 13;
+            acc = Q13_SHIFT_ROUND(acc);
             C[i][j] = CLAMP_INT32_TO_INT16(acc);
         }
     }
@@ -371,7 +407,7 @@ static inline int16_t float_to_q15(float x) {
  * @warning		all sigmal values should between 0 and 1
  * @see			andere_funktion() [Optionaler Verweis]
  */
-void create_Qc_matrix(float sigma_g,   // gyro noise [rad/s/√Hz]
+static void create_Qc_matrix(float sigma_g,   // gyro noise [rad/s/√Hz]
                       float sigma_a,   // accel noise [m/s²/√Hz]
                       float sigma_bg,  // gyro bias RW [rad/s/√s]
                       float sigma_ba,  // accel bias RW [m/s²/√s]
@@ -406,6 +442,210 @@ void create_Qc_matrix(float sigma_g,   // gyro noise [rad/s/√Hz]
         Qc[3+i][3+i]   = q_a;   // accel noise
         Qc[6+i][6+i]   = q_bg;  // gyro bias RW
         Qc[9+i][9+i]   = q_ba;  // accel bias RW
+    }
+}
+
+
+
+// dt in Sekunden -> Q15
+static inline int16_t q15_from_float(float x) {
+    int32_t t = (int32_t)(x * 32767.0f + (x>=0 ? 0.5f : -0.5f));
+    if (t >  32767) t =  32767;
+    if (t < -32767) t = -32767;
+    return (int16_t)t;
+}
+
+// effektive Δt-Faktoren (in Q15, < 1 bei typischen Raten)
+static inline int16_t dt_gyro_eff_q15(float dt_s) { // dt * FS_gyro
+    return q15_from_float(dt_s * FS_GYRO_RAD_S);
+}
+static inline int16_t dt_acc_eff_q15(float dt_s, float vel_q15_per_mps) { // dt * FS_acc / vel-scale
+    // vel_q15_per_mps: deine Geschwindigkeits-Skalierung (Q15-Zählwerte pro 1 m/s)
+    // falls v ebenfalls in SI->Q15 1 m/s ↔ 32767 kodiert ist, setze vel_q15_per_mps = 32767.0f
+    return q15_from_float(dt_s * FS_ACC_MPS2 / vel_q15_per_mps);
+}
+
+// A wurde mit omega_q15, acc_q15 (roh) gefüllt
+// Wir bilden Φ = I + A_ω * dt_ω + A_a * dt_a + A_const * dt
+
+static void accumulate_Phi_blocks_q15(const int16_t *A, int16_t *Phi,
+                               int16_t dt_gyro_eff, int16_t dt_acc_eff, int16_t dt_q15)
+{
+    // Phi = I
+    for (int r=0;r<15;r++){
+        for (int c=0;c<15;c++) Phi[r*15+c] = 0;
+        Phi[r*15+r] = Q15; // Q15_ONE
+    }
+
+    // --- Gyro-getriebene Teile ---
+    // (1) A(1:3,1:3) = -skew(omega_q15)  -> * dt_gyro_eff
+    for (int i=0;i<3;i++){
+        for (int j=0;j<3;j++){
+            int idxA = (0+i)*16 + (0+j);
+            int idxP = (0+i)*15 + (0+j);
+            int32_t acc = (int32_t)A[idxA] * dt_gyro_eff;   // Q15*Q15 -> Q30
+            acc = Q15_SHIFT_ROUND(acc); // -> Q15
+            int32_t s = (int32_t)Phi[idxP] + acc;
+            s = CLAMP_INT32_TO_INT16(s);
+            Phi[idxP] = (int16_t)s;
+        }
+    }
+    // (2) A(1:3,10:12) = -I3 -> * dt_gyro_eff
+    for (int i=0;i<3;i++){
+        int idxP = (0+i)*15 + (9+i);
+        int32_t acc = (int32_t)(-32767) * dt_gyro_eff; // -I * dtω
+        acc = Q15_SHIFT_ROUND(acc);
+        int32_t s = (int32_t)Phi[idxP] + acc;
+        s = CLAMP_INT32_TO_INT16(s);
+        Phi[idxP] = (int16_t)s;
+    }
+
+    // --- Acc-getriebene Teile ---
+    // (3) A(4:6,1:3) = -R*skew(acc_q15) -> * dt_acc_eff
+    for (int i=0;i<3;i++){
+        for (int j=0;j<3;j++){
+            int idxA = (3+i)*16 + (0+j);
+            int idxP = (3+i)*15 + (0+j);
+            int32_t acc = (int32_t)A[idxA] * dt_acc_eff;    // Q30
+            acc = Q15_SHIFT_ROUND(acc);
+            int32_t s = (int32_t)Phi[idxP] + acc;
+            s = CLAMP_INT32_TO_INT16(s);
+            Phi[idxP] = (int16_t)s;
+        }
+    }
+    // (4) A(4:6,13:15) = -R -> * dt_acc_eff
+    for (int i=0;i<3;i++){
+        for (int j=0;j<3;j++){
+            int idxA = (3+i)*16 + (12+j);
+            int idxP = (3+i)*15 + (12+j);
+            int32_t acc = (int32_t)A[idxA] * dt_acc_eff;
+            acc = Q15_SHIFT_ROUND(acc);
+            int32_t s = (int32_t)Phi[idxP] + acc;
+            s = CLAMP_INT32_TO_INT16(s);
+            Phi[idxP] = (int16_t)s;
+        }
+    }
+
+    // --- „konstanter“ Block ---
+    // (5) A(7:9,4:6) = +I3 -> * dt  (hier genügt echtes dt in Sekunden im Q15)
+    for (int i=0;i<3;i++){
+        int idxP = (6+i)*15 + (3+i);
+        int32_t acc = (int32_t)Q15 * dt_q15;  // +I * dt
+        acc = Q15_SHIFT_ROUND(acc);
+        int32_t s = (int32_t)Phi[idxP] + acc;
+        s = CLAMP_INT32_TO_INT16(s);
+        Phi[idxP] = (int16_t)s;
+    }
+}
+
+// G: 15x12 Q15, Qc: 12x12 Q15, dt_q15: Q15
+// Qd_out: 15x15 Q15
+// shift: zusätzlicher Downscale (empf.: 1..2) um Headroom zu schaffen
+void compute_Qd_q15(const int16_t G[15][12],
+                    const int16_t Qc[12][12],
+                    int16_t dt_q15,
+                    int shift,
+                    int16_t Qd_out[15][15])
+{
+    // T = G * Qc  -> T[15][12] in Q30 (accu 64-bit)
+    int32_t T[15][12];
+    for (int r=0; r<15; ++r){
+        for (int c=0; c<12; ++c){
+            int64_t acc = 0;
+            for (int k=0; k<12; ++k){
+                acc += (int64_t)G[r][k] * (int64_t)Qc[k][c]; // Q15*Q15 = Q30
+            }
+            // clamp to Q30 int32 range
+            if (acc >  0x3FFFFFFFLL) acc =  0x3FFFFFFFLL;
+            if (acc < -0x3FFFFFFFLL) acc = -0x3FFFFFFFLL;
+            T[r][c] = (int32_t)acc; // Q30
+        }
+    }
+
+    // Qd = (T * G^T) * dt
+    for (int r=0; r<15; ++r){
+        for (int c=0; c<15; ++c){
+            int64_t acc = 0;
+            for (int k=0; k<12; ++k){
+                // T[r][k] (Q30) * G[c][k] (Q15) -> Q45
+                acc += (int64_t)T[r][k] * (int64_t)G[c][k];
+            }
+            // Q45 -> Q30 (round):
+            acc += (acc >= 0 ? (1LL<<14) : -(1LL<<14));
+            acc >>= 15; // Q30
+            // * dt (Q15) -> Q45 -> back to Q30
+            acc = acc * (int64_t)dt_q15;
+            acc += (acc >= 0 ? (1LL<<14) : -(1LL<<14));
+            acc >>= 15; // Q30
+
+            // optional Downscale: >>shift to Q(30-shift)
+            if (shift > 0) acc >>= shift;
+
+            // Q30(-shift) -> Q15 (round)
+            acc += (acc >= 0 ? (1LL<<14) : -(1LL<<14));
+            acc >>= 15; // -> Q15
+            // saturate to Q15
+            if (acc >  32767) acc =  32767;
+            if (acc < -32767) acc = -32767;
+            Qd_out[r][c] = (int16_t)acc;
+        }
+    }
+}
+
+// Phi: 15x15 Q15, P_in: 15x15 Q15, Qd: 15x15 Q15  (alles Q15)
+// P_out: 15x15 Q15
+// shift: zusätzlicher Downscale während der beiden Matmul-Schritte (empf.: 1..2)
+void update_P_q15(const int16_t Phi[15][15],
+                  const int16_t P_in[15][15],
+                  const int16_t Qd[15][15],
+                  int shift,
+                  int16_t P_out[15][15])
+{
+    // T = Phi * P_in  (Q15*Q15 -> Q30 -> >> (15+shift) -> Q(15-shift) ~ Q15)
+    int16_t T[15][15]; // halten wir am Ende in Q15
+    for (int r=0; r<15; ++r){
+        for (int c=0; c<15; ++c){
+            int64_t acc = 0;
+            for (int k=0; k<15; ++k){
+                acc += (int64_t)Phi[r][k] * (int64_t)P_in[k][c]; // Q30
+            }
+            // -> Q15 mit zusätzlichem Downscale shift
+            // erst auf Q30 runden->Q15:
+            acc += (acc >= 0 ? (1LL<<14) : -(1LL<<14));
+            acc >>= 15; // Q15
+            if (shift > 0) acc >>= shift; // Headroom
+            if (acc >  32767) acc =  32767;
+            if (acc < -32767) acc = -32767;
+            T[r][c] = (int16_t)acc; // Q15
+        }
+    }
+
+    // P_tmp = T * Phi^T  (Q15*Q15 -> Q30 -> >> (15+shift) -> Q15), dann +Qd
+    for (int r=0; r<15; ++r){
+        for (int c=0; c<15; ++c){
+            int64_t acc = 0;
+            for (int k=0; k<15; ++k){
+                acc += (int64_t)T[r][k] * (int64_t)Phi[c][k]; // Q30
+            }
+            // -> Q15
+            acc += (acc >= 0 ? (1LL<<14) : -(1LL<<14));
+            acc >>= 15; // Q15
+            if (shift > 0) acc >>= shift;
+
+            // + Qd (Q15)
+            int32_t sum = (int32_t)acc + (int32_t)Qd[r][c];
+            if (sum >  32767) sum =  32767;
+            if (sum < -32767) sum = -32767;
+            P_out[r][c] = (int16_t)sum;
+        }
+    }
+
+    // (optional) Symmetrisieren für numerische Stabilität
+    for (int i=0;i<15;i++){
+        for (int j=i+1;j<15;j++){
+            int16_t s = (int16_t)(((int32_t)P_out[i][j] + (int32_t)P_out[j][i]) >> 1);
+            P_out[i][j] = s; P_out[j][i] = s;
+        }
     }
 }
 

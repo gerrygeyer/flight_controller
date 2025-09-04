@@ -21,9 +21,16 @@
 #include <communication.h>
 #include <Distance/distance_sensor.h>
 
+// Optical_flow
+#include <Optical_flow/uart_ring.h>
+#include <Optical_flow/mtf02.h>
+#include "Optical_flow/mtf02_rx.h"
+
 
 extern I2C_HandleTypeDef hi2c1;
 extern I2C_HandleTypeDef hi2c2;
+
+extern UART_HandleTypeDef huart8;
 
 //###### PARAMETER STRUCKT ######
 sensor_fusion sf_values;
@@ -36,11 +43,14 @@ float beta_f;
 int16_t drift_gain;
 int32_t w_drift[3];
 
+
+// #### global sf variables #####
 int16_t ax, ay, az, gx, gy, gz, mx, my, mz, dt_q15, beta_t;
 int16_t q_madgwick_out[4], q_compl_out[4];
 int16_t gyro_grad2rad_delta_t_q15;
-// Flags
+// ##### Flags #####
 volatile bool mag_ready_flag;
+
 // Output (debug)
 float beta_yaw = 0.005;
 int16_t beta_yaw_t;
@@ -74,33 +84,29 @@ static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf);
 static void q15_qDot_mu_dt_with_rest(int16_t *q_in, const int16_t *qDot, const int16_t dt);
 static void iir_filter_bx_bz_q15(int16_t *bxz);
 static void gyro_drift_Q15(const int16_t *q_est, const int16_t *qDot, int32_t *w_drift_grad);
+static void butterworth_filter_acc_Q15(const int16_t *acc, int16_t *acc_filt);
+static void iir_filter_acc_Q15(const int16_t *acc_raw, int16_t *acc_filter);
+static void iir_filter_gyro_Q15(const int16_t *gyro_raw, int16_t *gyro_filter);
 static void Complementary_filter_acc_gyro_mag(sensor_fusion *pHandle_sf, const bool acc_on,const bool mag_on);
 
 void get_quaternion_Q15(int16_t *q, int16_t *w) {
 	__disable_irq();
 	if(!sf_writing){
-		q[0] = sf_values.quaternion.w;
-		q[1] = sf_values.quaternion.x;
-		q[2] = sf_values.quaternion.y;
-		q[3] = sf_values.quaternion.z;
+		q[0] = sf_values.quaternion.w; 	q[1] = sf_values.quaternion.x;
+		q[2] = sf_values.quaternion.y; 	q[3] = sf_values.quaternion.z;
 
-		w[0] = sf_values.gyro_t.x;
-		w[1] = sf_values.gyro_t.y;
+		w[0] = sf_values.gyro_t.x; 		w[1] = sf_values.gyro_t.y;
 		w[2] = sf_values.gyro_t.z;
 		__enable_irq();
-		return q;
+		return;
 	}else{
-		q[0] = quaternion_buffer.w;
-		q[1] = quaternion_buffer.x;
-		q[2] = quaternion_buffer.y;
-		q[3] = quaternion_buffer.z;
+		q[0] = quaternion_buffer.w;		q[1] = quaternion_buffer.x;
+		q[2] = quaternion_buffer.y;		q[3] = quaternion_buffer.z;
 
-		w[0] = gyro_t_buffer.x;
-		w[1] = gyro_t_buffer.y;
+		w[0] = gyro_t_buffer.x;			w[1] = gyro_t_buffer.y;
 		w[2] = gyro_t_buffer.z;
-
 		__enable_irq();
-		return q;
+		return;
 	}
 }
 
@@ -108,35 +114,32 @@ sensor_fusion* read_sensorfusion_data(void){
     return &sf_values;
 }
 
-
 void init_sensors(void)
 {
 	sf_writing = false;
 	sensor_fusion_takeout = 0;
 	mag_ready_flag = false;
 
-	w_drift[0] = 0;
-	w_drift[1] = 0;
-	w_drift[2] = 0;
+	w_drift[0] = 0;		w_drift[1] = 0;		w_drift[2] = 0;
 
 //	dt_q15 = ((1UL <<15) * 35)/80;
-	float x = ((float)((float)Q15 * GRAD2RAD_GYRO)/(float)SENSOR_FUSION_FREQUENCY_IMU);
+	float x = ((float)((float)Q15)/(float)SENSOR_FUSION_FREQUENCY_IMU);
 	dt_q15 = CLAMP_INT32_TO_INT16((int32_t)x);
 
 //	dt_q15 = (1UL <<15)/80;
-	beta_f = 0.00015;
-	beta_yaw = 0.009;
+	beta_f = 0.05;
+	beta_yaw = 0.08;
 
-	q_madgwick_out[0] = Q15_ONE;
-	q_madgwick_out[1] = 0;
-	q_madgwick_out[2] = 0;
-	q_madgwick_out[3] = 0;
-
+	q_madgwick_out[0] = Q15_ONE;	q_madgwick_out[1] = 0;
+	q_madgwick_out[2] = 0;			q_madgwick_out[3] = 0;
 	drift_gain = 1;//CLAMP_INT32_TO_INT16((int32_t)(0.01f * (float)Q15));
 
 	if(COMMUNICATION_IMU_MAG){
 		LIS3MDL_Init();
 		MPU6000_Init();
+	}
+	if(COMMUNICATION_OPT_FLW){
+		MTF02_RX_Init(&huart8);
 	}
 
 
@@ -147,16 +150,17 @@ void task_imu_sensor_fusion(void){
 	if(sensor_fusion_takeout < 15){
 		sensor_fusion_takeout ++;
 	}else{
+		Tick_1kHz_Handler();
 
 		switch(SENSORFUSION_METHODE){
 		case (SF_MADGWICK):
 
 			MPU6000_Get_data_IT(&sf_values);
 				// debug calc for beta
-				beta_t = (int16_t)((float)INT16_MAX * beta_f * GRAD2RAD_GYRO);
-				beta_yaw_t = CLAMP_INT32_TO_INT16((int32_t)((float)INT16_MAX * beta_yaw * GRAD2RAD_GYRO));
-
-
+				beta_t = CLAMP_INT32_TO_INT16((int32_t)((float)INT16_MAX * beta_f));
+				beta_yaw_t = CLAMP_INT32_TO_INT16((int32_t)((float)INT16_MAX * beta_yaw));
+//		beta_t = CLAMP_INT32_TO_INT16((int32_t)((float)INT16_MAX * beta_f / 8.0f));
+//		beta_yaw_t = CLAMP_INT32_TO_INT16((int32_t)((float)INT16_MAX * beta_yaw / 8.0f));
 				switch(mag_ready_flag){
 				case(true):
 
@@ -221,7 +225,7 @@ void read_distance_sensor(void){
     // distance ist nun dein Messwert (in mm)
 }
 
-
+int16_t debug_z_component;
 static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf){
 
 
@@ -232,13 +236,18 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 
 	//get values
 
-	accel[0] = pHandle_sf->acc_t.x;
-	accel[1] = pHandle_sf->acc_t.y;
+	accel[0] = pHandle_sf->acc_t.x;		accel[1] = pHandle_sf->acc_t.y;
 	accel[2] = pHandle_sf->acc_t.z;
-	gyro[0] = pHandle_sf->gyro_t.x;
-	gyro[1] = pHandle_sf->gyro_t.y;
-	gyro[2] = pHandle_sf->gyro_t.z;
+//	gyro[0] = pHandle_sf->gyro_t.x;		gyro[1] = pHandle_sf->gyro_t.y;
+//	gyro[2] = pHandle_sf->gyro_t.z;
+	gyro[0] = q15_mul(pHandle_sf->gyro_t.x, GRAD2RAD_GYRO_MAX_Q15);
+	gyro[1] = q15_mul(pHandle_sf->gyro_t.y, GRAD2RAD_GYRO_MAX_Q15);
+	gyro[2] = q15_mul(pHandle_sf->gyro_t.z, GRAD2RAD_GYRO_MAX_Q15);
 
+	if(PREFILTER_SF){
+	iir_filter_gyro_Q15(gyro,gyro);
+	iir_filter_acc_Q15(accel, accel);
+	}
 //	gyro[0] -= pHandle_sf->gyro_drift_est.x;
 //	gyro[1] -= pHandle_sf->gyro_drift_est.y;
 //	gyro[2] -= pHandle_sf->gyro_drift_est.z;
@@ -252,85 +261,67 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 //	gyro[1] -= (w_drift[1] >> 5);
 //	gyro[2] -= (w_drift[2] >> 7);
 
-	debug_gyro_drift.x = w_drift[0];
-	debug_gyro_drift.y = w_drift[1];
+	debug_gyro_drift.x = w_drift[0];	debug_gyro_drift.y = w_drift[1];
 	debug_gyro_drift.z = w_drift[1];
 
-	debug_gyro.x = gyro[0];
-	debug_gyro.y = gyro[1];
+	debug_gyro.x = gyro[0];				debug_gyro.y = gyro[1];
 	debug_gyro.z = gyro[2];
 
-	mag_raw[0] = pHandle_sf->mag_t.x;
-	mag_raw[1] = pHandle_sf->mag_t.y;
+	mag_raw[0] = pHandle_sf->mag_t.x;	mag_raw[1] = pHandle_sf->mag_t.y;
 	mag_raw[2] = pHandle_sf->mag_t.z; // raw z-axis point up
 
-	omega[0] = 0;
-//	omega[1] = debug_omega.x = q15_mul(gyro[0],GYRO_GRAD_TO_RAD_Q15);
-//	omega[2] = debug_omega.y = q15_mul(gyro[1],GYRO_GRAD_TO_RAD_Q15);
-//	omega[3] = debug_omega.z = q15_mul(gyro[2],GYRO_GRAD_TO_RAD_Q15);
+	omega[0] = 0;						omega[1] = debug_omega.x = gyro[0];
+	omega[2] = debug_omega.y = gyro[1];	omega[3] = debug_omega.z = gyro[2];
 
-	omega[1] = debug_omega.x = gyro[0];
-	omega[2] = debug_omega.y = gyro[1];
-	omega[3] = debug_omega.z = gyro[2];
-
-
-
-	debug_mag_raw.x = mag_raw[0];
-	debug_mag_raw.y = mag_raw[1];
+	debug_mag_raw.x = mag_raw[0];		debug_mag_raw.y = mag_raw[1];
 	debug_mag_raw.z = mag_raw[2];
 
-
 	hardiron_apply_q15(mag_raw);
-	debug_mag_hard_iron.x = mag_raw[0];
-	debug_mag_hard_iron.y = mag_raw[1];
+
+	debug_mag_hard_iron.x = mag_raw[0];	debug_mag_hard_iron.y = mag_raw[1];
 	debug_mag_hard_iron.z = mag_raw[2];
 	softiron_apply_q15(mag_raw, mag_equalized);
-	debug_mag_soft.x = mag_equalized[0];
-	debug_mag_soft.y = mag_equalized[1];
+
+	debug_mag_soft.x = mag_equalized[0];debug_mag_soft.y = mag_equalized[1];
 	debug_mag_soft.z = mag_equalized[2];
+
 	norm_3d_vector(accel, accel_norm);
 	norm_3d_vector(mag_equalized, mag_norm);
 
-
-	debug_mag_norm.x = mag_norm[1];
-	debug_mag_norm.y = mag_norm[0];
+	debug_mag_norm.x = mag_norm[1];	debug_mag_norm.y = mag_norm[0];
 	debug_mag_norm.z = mag_norm[2];
 
-	mag_quat[0] = 0;
-	mag_quat[1] = mag_norm[1];
-	mag_quat[2] = mag_norm[0];
-	mag_quat[3] = mag_norm[2];
-
+	mag_quat[0] = 0;				mag_quat[1] = mag_norm[1];
+	mag_quat[2] = mag_norm[0];		mag_quat[3] = mag_norm[2];
 
 	// h = q ⊗ [0; mag] ⊗ q*    // getestet und funkitoniert ✅
 	q_t_conj_function_in_out_q15(q_madgwick_out, q_con); // getestet und funkitoniert ✅
 	multiplicateQuaternionQ15(q_madgwick_out,mag_quat,q_mul_w); // getestet und funkitoniert ✅
 	multiplicateQuaternionQ15(q_mul_w,q_con,h); // getestet und funkitoniert ✅
+
 	get_bx_bz_q15(h, bxz); // getestet und funkitoniert ✅
 
-	bxz[0] = - bxz[0]; // correct the yaw direction
+	if(bxz[1] > -7000){
+		bxz[0] = bxz[1] = 0;
+	}
+//	bxz[0] = - bxz[0]; // correct the yaw direction
 
 	iir_filter_bx_bz_q15(bxz);
 
-	debug_q_mult.w = q_mul_w[0];
-	debug_q_mult.x = q_mul_w[1];
-	debug_q_mult.y = q_mul_w[2];
-	debug_q_mult.z = q_mul_w[3];
+	debug_q_mult.w = q_mul_w[0];	debug_q_mult.x = q_mul_w[1];
+	debug_q_mult.y = q_mul_w[2];	debug_q_mult.z = q_mul_w[3];
 
-	debug_h1 = h[0];
-	debug_h2 = h[1];
-	debug_h3 = h[2];
-	debug_h4 = h[3];
+	debug_h1 = h[0];				debug_h2 = h[1];
+	debug_h3 = h[2];				debug_h4 = h[3];
 
-	debug_bx = bxz[0];
-	debug_bz = bxz[1];
+	debug_bx = bxz[0];				debug_bz = bxz[1];
 
 	error_function_bigQ15(accel_norm, mag_norm, q_madgwick_out, f_error, bxz); // getestet und funkitoniert ✅
 	get_jacobi_bigQ15(J,q_madgwick_out, bxz); // getestet und funkitoniert ✅
 	compute_gradient_bigQ15(grad, J, f_error); // getestet und funkitoniert ✅
 	Normalize4DvectorQ15(grad, grad_norm);
 
-	gyro_drift_Q15(q_madgwick_out,grad_norm, w_drift);
+//	gyro_drift_Q15(q_madgwick_out,grad_norm, w_drift);
 
 	multiplicateQuaternionQ15(q_madgwick_out,omega,qDot); // getestet und funkitoniert ✅
 	divideQuaternionBy2(qDot); // getestet und funkitoniert ✅
@@ -339,30 +330,32 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 	 * qDot = qDot - beta * grad;
 	 */
 
-
+//	positve_quaternion_test_Q15(qDot);
+	debug_z_component = q15_mul(grad_norm[3], beta_yaw_t);
 
 	qDot[0] = debug_qDot.w = CLAMP_INT32_TO_INT16((int32_t)qDot[0] - (int32_t)q15_mul(grad_norm[0], beta));
 	qDot[1] = debug_qDot.x = CLAMP_INT32_TO_INT16((int32_t)qDot[1] - (int32_t)q15_mul(grad_norm[1], beta));
 	qDot[2] = debug_qDot.y = CLAMP_INT32_TO_INT16((int32_t)qDot[2] - (int32_t)q15_mul(grad_norm[2], beta));
 	qDot[3] = debug_qDot.z = CLAMP_INT32_TO_INT16((int32_t)qDot[3] - (int32_t)q15_mul(grad_norm[3], beta_yaw_t));
-
-
-
-
+	NormalizeQuaternionQ15(qDot, qDot);
 	q15_qDot_mu_dt_with_rest(q_madgwick_out,qDot, dt_q15); // here in dt_q15 the calc gyro_grad_2_rad
-
 	NormalizeQuaternionQ15(q_madgwick_out, q_madgwick_out);
-	debug_q_out_norm.w = q_madgwick_out[0];
-	debug_q_out_norm.x = q_madgwick_out[1];
-	debug_q_out_norm.y = q_madgwick_out[2];
-	debug_q_out_norm.z = q_madgwick_out[3];
-
+//	positve_quaternion_test_Q15(q_madgwick_out);
+	debug_q_out_norm.w = q_madgwick_out[0];	debug_q_out_norm.x = q_madgwick_out[1];
+	debug_q_out_norm.y = q_madgwick_out[2];	debug_q_out_norm.z = q_madgwick_out[3];
 
 	quat_to_euler_q15(q_madgwick_out, euler_debug);
 	euler_debug_roll = (float)euler_debug[0];// * 360.0f / (float)INT16_MAX;
 	euler_debug_pitch = (float)euler_debug[1];// * 360.0f / (float)INT16_MAX;
 	euler_debug_yaw = (float)euler_debug[2];// * 360.0f / (float)INT16_MAX;
 
+//
+//	if(q_madgwick_out[0] < 0){
+//		q_madgwick_out[0] = -q_madgwick_out[0];
+//		q_madgwick_out[1] = -q_madgwick_out[1];
+//		q_madgwick_out[2] = -q_madgwick_out[2];
+//		q_madgwick_out[3] = -q_madgwick_out[3];
+//	}
 	// Safe quaternion / gyro two times
 	// 1. Time
 	sf_writing = true;
@@ -370,10 +363,10 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 	pHandle_sf->quaternion.x = q_madgwick_out[1];
 	pHandle_sf->quaternion.y = q_madgwick_out[2];
 	pHandle_sf->quaternion.z = q_madgwick_out[3];
+//	pHandle_sf->gyro_t_rad.x = gyro[0];
+//	pHandle_sf->gyro_t_rad.y = gyro[1];
+//	pHandle_sf->gyro_t_rad.z = gyro[2];
 
-//	pHandle_sf->gyro_t_rad.x =  q15_mul(gyro[0],GRAD2RAD_GYRO_MAX_Q15);
-//	pHandle_sf->gyro_t_rad.y =  q15_mul(gyro[1],GRAD2RAD_GYRO_MAX_Q15);
-//	pHandle_sf->gyro_t_rad.z =  q15_mul(gyro[2],GRAD2RAD_GYRO_MAX_Q15);
 	sf_writing = false;
 	// 2. Time
 	quaternion_buffer.w = q_madgwick_out[0];
@@ -386,21 +379,25 @@ static void Madgwick_filter_acc_gyro_mag(int16_t beta, sensor_fusion *pHandle_sf
 	gyro_t_buffer.z =  gyro[2];
 	// end
 }
-
+xyz_16t accel_filter;
 static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf){
 
 	int16_t accel[3], accel_norm[3], gyro[3], f_error[3], grad[4], grad_norm[4],omega[4], qDot[4], J[3][4];
 
 
 
-	accel[0] = pHandle_sf->acc_t.x;
-	accel[1] = pHandle_sf->acc_t.y;
+	accel[0] = pHandle_sf->acc_t.x;		accel[1] = pHandle_sf->acc_t.y;
 	accel[2] = pHandle_sf->acc_t.z;
-
-	gyro[0] = pHandle_sf->gyro_t.x;
-	gyro[1] = pHandle_sf->gyro_t.y;
+	gyro[0] = pHandle_sf->gyro_t.x;		gyro[1] = pHandle_sf->gyro_t.y;
 	gyro[2] = pHandle_sf->gyro_t.z;
 
+//	gyro[0] = q15_mul(pHandle_sf->gyro_t.x, GRAD2RAD_GYR_MAX_SC_Q15);
+//	gyro[1] = q15_mul(pHandle_sf->gyro_t.y, GRAD2RAD_GYR_MAX_SC_Q15);
+//	gyro[2] = q15_mul(pHandle_sf->gyro_t.z, GRAD2RAD_GYR_MAX_SC_Q15);
+	if(PREFILTER_SF){
+		iir_filter_gyro_Q15(gyro,gyro);
+		iir_filter_acc_Q15(accel, accel);
+	}
 	// compensate Drift
 //	gyro[0] += q15_mul(q_drift[1],drift_gain);
 //	gyro[1] += q15_mul(q_drift[2],drift_gain);
@@ -410,19 +407,16 @@ static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf){
 //	gyro[1] -= (w_drift[1] >> 7);
 //	gyro[2] -= (w_drift[2] >> 7);
 
-	debug_gyro_drift.x = w_drift[0];
-	debug_gyro_drift.y = w_drift[1];
+	debug_gyro_drift.x = w_drift[0];	debug_gyro_drift.y = w_drift[1];
 	debug_gyro_drift.z = w_drift[2];
 
 
-	omega[0] = 0;
-//	omega[1] = debug_gyro.x = q15_mul(gyro[0],GYRO_GRAD_TO_RAD_Q15);
-//	omega[2] = debug_gyro.y = q15_mul(gyro[1],GYRO_GRAD_TO_RAD_Q15);
-//	omega[3] = debug_gyro.z = q15_mul(gyro[2],GYRO_GRAD_TO_RAD_Q15);
-	omega[1] = debug_omega.x = gyro[0];
-	omega[2] = debug_omega.y = gyro[1];
-	omega[3] = debug_omega.z = gyro[2];
+	omega[0] = 0;						omega[1] = debug_omega.x = gyro[0];
+	omega[2] = debug_omega.y = gyro[1];	omega[3] = debug_omega.z = gyro[2];
 
+	accel_filter.x = accel[0];
+	accel_filter.y = accel[1];
+	accel_filter.z = accel[2];
 
 	norm_3d_vector(accel, accel_norm); // getestet und funkitoniert ✅
 	error_function_small(accel_norm, q_madgwick_out, f_error); // getestet und funkitoniert ✅
@@ -442,16 +436,21 @@ static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf){
 	qDot[1] = debug_qDot.x = CLAMP_INT32_TO_INT16((int32_t)qDot[1] - (int32_t)q15_mul(grad_norm[1], beta));
 	qDot[2] = debug_qDot.y = CLAMP_INT32_TO_INT16((int32_t)qDot[2] - (int32_t)q15_mul(grad_norm[2], beta));
 	qDot[3] = debug_qDot.z = CLAMP_INT32_TO_INT16((int32_t)qDot[3] - (int32_t)q15_mul(grad_norm[3], beta));
-
+	NormalizeQuaternionQ15(qDot, qDot);
 	q15_qDot_mu_dt_with_rest(q_madgwick_out,qDot, dt_q15);
 
-	debug_q_out.w = q_madgwick_out[0];
-	debug_q_out.x = q_madgwick_out[1];
-	debug_q_out.y = q_madgwick_out[2];
-	debug_q_out.z = q_madgwick_out[3];
+	debug_q_out.w = q_madgwick_out[0];		debug_q_out.x = q_madgwick_out[1];
+	debug_q_out.y = q_madgwick_out[2];		debug_q_out.z = q_madgwick_out[3];
 
 	NormalizeQuaternionQ15(q_madgwick_out, q_madgwick_out);
+//	positve_quaternion_test_Q15(q_madgwick_out);
 
+//	if(q_madgwick_out[0] < 0){
+//		q_madgwick_out[0] = -q_madgwick_out[0];
+//		q_madgwick_out[1] = -q_madgwick_out[1];
+//		q_madgwick_out[2] = -q_madgwick_out[2];
+//		q_madgwick_out[3] = -q_madgwick_out[3];
+//	}
 	// Safe quaternion / gyro two times
 	// 1. Time
 	sf_writing = true;
@@ -460,9 +459,13 @@ static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf){
 	pHandle_sf->quaternion.y = q_madgwick_out[2];
 	pHandle_sf->quaternion.z = q_madgwick_out[3];
 
-	pHandle_sf->gyro_t_rad.x =  q15_mul(gyro[0],GRAD2RAD_GYRO_MAX_Q15);
-	pHandle_sf->gyro_t_rad.y =  q15_mul(gyro[1],GRAD2RAD_GYRO_MAX_Q15);
-	pHandle_sf->gyro_t_rad.z =  q15_mul(gyro[2],GRAD2RAD_GYRO_MAX_Q15);
+//	pHandle_sf->gyro_t_rad.x =  q15_mul(gyro[0],GRAD2RAD_GYRO_MAX_Q15);
+//	pHandle_sf->gyro_t_rad.y =  q15_mul(gyro[1],GRAD2RAD_GYRO_MAX_Q15);
+//	pHandle_sf->gyro_t_rad.z =  q15_mul(gyro[2],GRAD2RAD_GYRO_MAX_Q15);
+//
+//	pHandle_sf->gyro_t_rad.x = gyro[0];
+//	pHandle_sf->gyro_t_rad.y = gyro[1];
+//	pHandle_sf->gyro_t_rad.z = gyro[2];
 	sf_writing = false;
 	// 2. Time
 	quaternion_buffer.w = q_madgwick_out[0];
@@ -488,7 +491,7 @@ static void Madgwick_filter_acc_gyro(int16_t beta, sensor_fusion *pHandle_sf){
 }
 // ######## QUATERNION INLINE FUNCTIONS ############
 static inline int16_t q15_mul(int16_t a, int16_t b) {
-    return (int16_t)(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
+    return CLAMP_INT32_TO_INT16(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
 }
 
 /**
@@ -512,34 +515,39 @@ static inline int16_t q15_mul(int16_t a, int16_t b) {
  *
  * @see         CLAMP_INT32_TO_INT16
  */
+int16_t debug_z_prod;
 static void q15_qDot_mu_dt_with_rest(int16_t *q_in, const int16_t *qDot, const int16_t dt){
 	static wxyz_16t rest = {0, 0, 0, 0};
-    int32_t prod, delta, sum;
+    int32_t delta, sum; //prod
+    int64_t prod;
+
+
     // w
-    prod = (int32_t)qDot[0] * dt + rest.w;
+    prod = (int64_t)qDot[0] * dt + rest.w;
     delta = prod >> 15;
-    rest.w = prod - (delta << 15);
+    rest.w = CLAMP_INT32_TO_INT16(prod - (delta << 15));
     sum = (int32_t)q_in[0] + delta;
     q_in[0] = CLAMP_INT32_TO_INT16(sum);
 
     // x
-    prod = (int32_t)qDot[1] * dt + rest.x;
+    prod = (int64_t)qDot[1] * dt + rest.x;
     delta = prod >> 15;
-    rest.x = prod - (delta << 15);
+    rest.x = CLAMP_INT32_TO_INT16(prod - (delta << 15));
     sum = (int32_t)q_in[1] + delta;
     q_in[1] = CLAMP_INT32_TO_INT16(sum);
 
     // y
-    prod = (int32_t)qDot[2] * dt + rest.y;
+    prod = (int64_t)qDot[2] * dt + rest.y;
     delta = prod >> 15;
-    rest.y = prod - (delta << 15);
+    rest.y = CLAMP_INT32_TO_INT16(prod - (delta << 15));
     sum = (int32_t)q_in[2] + delta;
     q_in[2] = CLAMP_INT32_TO_INT16(sum);
 
     // z
-    prod = (int32_t)qDot[3] * dt + rest.z;
+    prod = (int64_t)qDot[3] * dt + rest.z;
+    debug_z_prod = prod;
     delta = prod >> 15;
-    rest.z = prod - (delta << 15);
+    rest.z = CLAMP_INT32_TO_INT16(prod - (delta << 15));
     sum = (int32_t)q_in[3] + delta;
     q_in[3] = CLAMP_INT32_TO_INT16(sum);
 }
@@ -612,7 +620,6 @@ static void error_function_small(int16_t *accel, int16_t *q, int16_t *f_error){
 
 static void error_function_bigQ15(const int16_t *accel, const int16_t *mag,const int16_t *q, int16_t *f_error, const int16_t *bxz){
 	int32_t q_24, q_13, q_12, q_34, q_23, q_14;
-	uint32_t x_ut;
 	int32_t x_t;
 
 	q_24 = q15_mul(q[1],q[3]);
@@ -840,6 +847,7 @@ static void iir_filter_bx_bz_q15(int16_t *bxz){
 
 
 
+
 // ######## END STATIC FUNCTIONS ############
 
 // ######## TEST #########
@@ -881,15 +889,80 @@ void run_test_vectors(void) {
 
 	compute_gradient_bigQ15(grad, J, f_error);
 
+
+	int16_t q[4] = { 23170, 0, 23170, 0 };  // Q15
+	int16_t pitch_arg = (q15_mul(q[0], q[2]) - q15_mul(q[3], q[1])) << 1;
+	// Erwartet: pitch_arg ≈ 2 * 0.7071 * 0.7071 ≈ 1.0 → ≈ 32767
+
+	// pitch_q15 ≈ asin(1.0) → π/2 → ≈ 16384 (Q15)
+	int16_t pitch = q15_asin(pitch_arg);
+
+
 	HAL_Delay(1);
 
 
 }
+static void copy3DvectorQ15(const int16_t *in, int16_t *out){
+	out[0] = in[0];
+	out[1] = in[1];
+	out[2] = in[2];
+}
+/*
+ * % === Parameter ===
+fc = 12;         % Cutoff-Frequenz in Hz
+fs = 1000;       % Abtastfrequenz in Hz (Sampling rate)
+n  = 2;          % Ordnung des Filters
+
+% === Berechnung der Koeffizienten ===
+[b, a] = butter(n, fc/(fs/2), 'low');  % digitaler Butterworth-Tiefpass
+
+% === Ausgabe der Float-Koeffizienten ===
+disp('Float-Koeffizienten:')
+disp('b = '), disp(b)
+disp('a = '), disp(a)
+
+% === Umwandlung in Q15-Fixed-Point ===
+scale = 2^15;
+b_q15 = round(b * scale);
+a_q15 = round(a(2:end) * scale);  % a(1) ist immer 1 → wird weggelassen
+
+% === Ausgabe der Q15-Koeffizienten ===
+disp('Q15-Koeffizienten (für C-Code):')
+fprintf('int16_t b[3] = { %d, %d, %d };\n', b_q15)
+fprintf('int16_t a[2] = { %d, %d };\n', a_q15)
+ */
+static void butterworth_filter_acc_Q15(const int16_t *acc, int16_t *acc_filt){
+	const int16_t b0 = 44,	b1 = 88,	b2 = 44, // Q15
+			a1 = -31023 ,a2 = 29454; // a1(Q14), a2(Q15)
+	static int16_t x_n1[3] = {0}, x_n2[3] = {0},y_n1[3] = {0}, y_n2[3] = {0};
+	int32_t x;
+	x = ((((int32_t)y_n1[0] * -a1) >> 1) + (((int32_t)y_n2[0] * -a2) >> 2)) >> 3; // Q25
+	x += ((((int32_t)acc[0] * b0) + ((int32_t)x_n1[0] * b1) + ((int32_t)x_n2[0] * b2)) >> 5); // Q25
+	x = Q10_SHIFT_ROUND(x);
+	acc_filt[0] = CLAMP_INT32_TO_INT16(x);
+
+	x = ((((int32_t)y_n1[1] * -a1) >> 1) + (((int32_t)y_n2[1] * -a2) >> 2)) >> 3; // Q25
+	x += ((((int32_t)acc[1] * b0) + ((int32_t)x_n1[1] * b1) + ((int32_t)x_n2[1] * b2)) >> 5); // Q25
+	x = Q10_SHIFT_ROUND(x);
+	acc_filt[1] = CLAMP_INT32_TO_INT16(x);
+
+	x = ((((int32_t)y_n1[2] * -a1) >> 1) + (((int32_t)y_n2[2] * -a2) >> 2)) >> 3; // Q25
+	x += ((((int32_t)acc[2] * b0) + ((int32_t)x_n1[2] * b1) + ((int32_t)x_n2[2] * b2)) >> 5); // Q25
+	x = Q10_SHIFT_ROUND(x);
+	acc_filt[2] = CLAMP_INT32_TO_INT16(x);
+
+	copy3DvectorQ15(x_n1, x_n2);
+	copy3DvectorQ15(acc, x_n1);
+	copy3DvectorQ15(y_n1, y_n2);
+	copy3DvectorQ15(acc_filt, y_n1);
+
+}
 // ################### COMPLEMENTARY FILTER (cf) ###############################
 
-static void iir_filter_acc_cf_Q15(const int16_t *acc_raw, int16_t *acc_filter){
-	const int16_t fc = 20; //hz
-	static int32_t a = CLAMP_INT32_TO_INT16((int32_t)((PI_MULTIPLY_2 * (float)fc * (float)SENSOR_FUSION_FREQUENCY_IMU)/(PI_MULTIPLY_2 * (float)fc * (float)SENSOR_FUSION_FREQUENCY_IMU + 1.0f)));
+static void iir_filter_acc_Q15(const int16_t *acc_raw, int16_t *acc_filter){
+//	const int16_t fc = 20; //hz
+//	static int32_t a = CLAMP_INT32_TO_INT16((int32_t)((PI_MULTIPLY_2 * (float)fc * (1.0f/(float)SENSOR_FUSION_FREQUENCY_IMU))/(PI_MULTIPLY_2 * (float)fc * (1.0f/(float)SENSOR_FUSION_FREQUENCY_IMU) + 1.0f)));
+	const int16_t a = 2297; // ~0.07 * Q15 // 12 Hz
 	static int32_t acc_old[3] = {0};
 
 
@@ -900,6 +973,22 @@ static void iir_filter_acc_cf_Q15(const int16_t *acc_raw, int16_t *acc_filter){
 	acc_filter[0] = acc_old[0] = CLAMP_INT32_TO_INT16(acc_old[0]);
 	acc_filter[1] = acc_old[1] = CLAMP_INT32_TO_INT16(acc_old[1]);
 	acc_filter[2] = acc_old[2] = CLAMP_INT32_TO_INT16(acc_old[2]);
+}
+
+static void iir_filter_gyro_Q15(const int16_t *gyro_raw, int16_t *gyro_filter){
+//	const int16_t fc = 20; //hz
+//	static int32_t a = CLAMP_INT32_TO_INT16((int32_t)((PI_MULTIPLY_2 * (float)fc * (1.0f/(float)SENSOR_FUSION_FREQUENCY_IMU))/(PI_MULTIPLY_2 * (float)fc * (1.0f/(float)SENSOR_FUSION_FREQUENCY_IMU) + 1.0f)));
+	const int16_t a = 3658; // ~0.116 * Q15 // 20 Hz
+	static int32_t acc_old[3] = {0};
+
+
+	acc_old[0] = ((a * (int32_t)gyro_raw[0]) >> 15) + ((((int32_t)Q15 - a) * acc_old[0]) >> 15);
+	acc_old[1] = ((a * (int32_t)gyro_raw[1]) >> 15) + ((((int32_t)Q15 - a) * acc_old[1]) >> 15);
+	acc_old[2] = ((a * (int32_t)gyro_raw[2]) >> 15) + ((((int32_t)Q15 - a) * acc_old[2]) >> 15);
+
+	gyro_filter[0] = acc_old[0] = CLAMP_INT32_TO_INT16(acc_old[0]);
+	gyro_filter[1] = acc_old[1] = CLAMP_INT32_TO_INT16(acc_old[1]);
+	gyro_filter[2] = acc_old[2] = CLAMP_INT32_TO_INT16(acc_old[2]);
 }
 
 static void integrate_gyro_dot_Q15(const int16_t *q_est, const int16_t *q_dot, const int16_t delta_t, int16_t *q_int){
@@ -924,21 +1013,20 @@ static void integrate_gyro_dot_Q15(const int16_t *q_est, const int16_t *q_dot, c
 
 }
 
-static int32_t norm_of_3D_vector(const int16_t *v){
-	uint32_t x;
-
-	x = (((int32_t)v[0] * (int32_t)v[0])) + (((int32_t)v[1] * (int32_t)v[1])) + (((int32_t)v[2] * (int32_t)v[2])); // Q30
-	return (int32_t)sqrt_fast_uint(x);
-}
+//static int32_t norm_of_3D_vector(const int16_t *v){
+//	uint32_t x;
+//	x = (((int32_t)v[0] * (int32_t)v[0])) + (((int32_t)v[1] * (int32_t)v[1])) + (((int32_t)v[2] * (int32_t)v[2])); // Q30
+//	return (int32_t)sqrt_fast_uint(x);
+//}
 int16_t debug_cf_error;
 static void adaptive_acc_cf_Q15(const int16_t *acc_raw, int16_t *beta){
 	int32_t x;
 
-	x = CLAMP_INT32_TO_INT16(norm_of_3D_vector(acc_raw) + (Q15 >> 4)); // norm(a) -g // acc -> 16g/Q15 // g = (Q15 / 12)
+	x = CLAMP_INT32_TO_INT16(norm_of_3D_vector(acc_raw) - (Q15 >> 4)); // norm(a) -g // acc -> 16g/Q15 // g = (Q15 / 12)
 	x = abs(x);
 	debug_cf_error = x;
-	const int16_t limit_high = 80;
-	const int16_t limit_low = 40;
+	const int16_t limit_high = 40;
+	const int16_t limit_low = 15;
 	int16_t diff = abs(limit_high - limit_low);
 
 	if(x > limit_high){
@@ -954,10 +1042,10 @@ static void adaptive_acc_cf_Q15(const int16_t *acc_raw, int16_t *beta){
 
 
 }
-
+wxyz_16t comp_gyro, comp_acc_corr, comp_qest, comp_minRot;
 static void Complementary_filter_acc_gyro_mag(sensor_fusion *pHandle_sf, const bool acc_on,const bool mag_on){
 	int16_t acc[3], acc_norm[3], acc_filter[3], gyro[3],qDot[4],q_gyro[4],omega[4], mag_raw[3], mag_equalized[3], mag_norm[3],mag_q[3];
-	int16_t g_est[3];
+	int16_t q_est[4];
 	static int16_t delta_t = CLAMP_INT32_TO_INT16((int32_t)((float)(34.9f/(float)SENSOR_FUSION_FREQUENCY_IMU) * (float)Q15));
 	//get values
 
@@ -990,8 +1078,9 @@ static void Complementary_filter_acc_gyro_mag(sensor_fusion *pHandle_sf, const b
 	debug_mag_soft.x = mag_equalized[0];
 	debug_mag_soft.y = mag_equalized[1];
 	debug_mag_soft.z = mag_equalized[2];
+	iir_filter_acc_Q15(acc_norm, acc_norm);
 	norm_3d_vector(acc, acc_norm);
-	iir_filter_acc_cf_Q15(acc_norm, acc_filter);
+
 	norm_3d_vector(mag_equalized, mag_norm);
 
 
@@ -1008,7 +1097,9 @@ static void Complementary_filter_acc_gyro_mag(sensor_fusion *pHandle_sf, const b
 	divideQuaternionBy2(qDot); // getestet und funkitoniert ✅
 
 	integrate_gyro_dot_Q15(q_compl_out, qDot,delta_t,q_gyro);
-
+	// Debug
+	comp_gyro.w = q_gyro[0];	comp_gyro.x = q_gyro[1];
+	comp_gyro.y = q_gyro[2];	comp_gyro.z = q_gyro[3];
 
 	if(acc_on == true){
 		int16_t v[3], min_rot_a[4], q_acc_corr[4], adapt_beta;
@@ -1020,19 +1111,35 @@ static void Complementary_filter_acc_gyro_mag(sensor_fusion *pHandle_sf, const b
 		debug_cf_v_y = v[1];
 		debug_cf_v_z = v[2];
 
-		minimal_rotation(v, g, min_rot_a);
+		minimal_rotation(v, g, min_rot_a); // hier kommt 0 raus
+		comp_minRot.w = min_rot_a[0]; 	comp_minRot.x = min_rot_a[1];
+		comp_minRot.y = min_rot_a[2];	comp_minRot.z = min_rot_a[3];
 		adaptive_acc_cf_Q15(acc, &adapt_beta);
 
-		nLERP_quaternion_Q15(q_gyro,q_0, adapt_beta,q_acc_corr);
-//		rotate_vector_Q15();
+		nLERP_quaternion_Q15(min_rot_a,q_0, adapt_beta,q_acc_corr);
+		// Debug
+		comp_acc_corr.w = q_acc_corr[0];	comp_acc_corr.x = q_acc_corr[1];
+		comp_acc_corr.y = q_acc_corr[2];	comp_acc_corr.z = q_acc_corr[3];
 
+//		q_t_conj_function(q_acc_corr);
+
+//		rotate_vector_Q15();
+		multiplicateQuaternionQ15(q_gyro, q_acc_corr, q_est);
 	}
 
+	comp_qest.w = q_est[0];		comp_qest.x = q_est[1];
+	comp_qest.y = q_est[2];		comp_qest.z = q_est[3];
 
-	q_compl_out[0] = q_gyro[0];
-	q_compl_out[1] = q_gyro[1];
-	q_compl_out[2] = q_gyro[2];
-	q_compl_out[3] = q_gyro[3];
+	q_compl_out[0] = q_gyro[0];	q_compl_out[1] = q_gyro[1];
+	q_compl_out[2] = q_gyro[2];	q_compl_out[3] = q_gyro[3];
+
+//	q_compl_out[0] = q_est[0];	q_compl_out[1] = q_est[1];
+//	q_compl_out[2] = q_est[2];	q_compl_out[3] = q_est[3];
+
+	quat_to_euler_q15(q_est, euler_debug);
+	euler_debug_roll = (float)euler_debug[0];// * 360.0f / (float)INT16_MAX;
+	euler_debug_pitch = (float)euler_debug[1];// * 360.0f / (float)INT16_MAX;
+	euler_debug_yaw = (float)euler_debug[2];// * 360.0f / (float)INT16_MAX;
 }
 
 

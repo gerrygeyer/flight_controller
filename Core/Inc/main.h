@@ -125,6 +125,10 @@ void Error_Handler(void);
 #define MAG_SCL_GPIO_Port GPIOB
 #define MAG_SDA_Pin GPIO_PIN_7
 #define MAG_SDA_GPIO_Port GPIOB
+#define OPTICAL_FLOW_8RX_Pin GPIO_PIN_0
+#define OPTICAL_FLOW_8RX_GPIO_Port GPIOE
+#define OPTICAL_FLOW_8TX_Pin GPIO_PIN_1
+#define OPTICAL_FLOW_8TX_GPIO_Port GPIOE
 
 /* USER CODE BEGIN Private defines */
 

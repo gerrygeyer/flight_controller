@@ -93,6 +93,11 @@
  */
 #define Q15_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 14) : -(1 << 14))) >> 15)
 #define Q14_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 13) : -(1 << 13))) >> 14)
+#define Q13_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 12) : -(1 << 12))) >> 13)
+#define Q10_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 9) : -(1 << 9))) >> 10)
+#define Q8_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 7) : -(1 << 7))) >> 8)
+#define Q1_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 0) : -(1 << 0))) >> 1)
+
 
 /**
  * @brief       Converts motor speed from RPM to angular velocity in rad/s (Q15 scaled).
@@ -172,6 +177,8 @@ uint32_t stopp_time_measurement(void);
  * @see         sineLookupTable, Q15 fixed-point format
  */
 int16_t sin_i(int16_t y);
+int16_t sin_Q15(int16_t y);
+
 
 /**
  * @brief       Computes the cosine of an angle in Q15 format using a sine lookup table.
@@ -192,6 +199,7 @@ int16_t sin_i(int16_t y);
  * @see         sin_i(), sineLookupTable
  */
 int16_t cos_i(int16_t y);
+int16_t cos_Q15(int16_t y);
 
 /**
  * @brief       Approximates the arcsine (asin) of a Q15 input using a lookup table and linear interpolation.
@@ -256,6 +264,7 @@ int16_t q15_atan2(int16_t y, int16_t x);
 
 void crossproduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *cross);
 void dotporduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *dot);
+void dotporduct_4x4_Q15(const int16_t *v1, const int16_t *v2, int16_t *dot);
 
 /** @} */
 
@@ -358,6 +367,13 @@ void q_t_conj_function_in_out_q15(const int16_t *q_in, int16_t *q_out);
 void q_t_flipp(int16_t *q);
 
 /**
+ * @brief		Test for positive direction
+ *
+ * @see			q_t_conj_function_in_out_q15
+ */
+void positve_quaternion_test_Q15(int16_t *q);
+
+/**
  * @brief       Normalizes a 3D vector to unit length in Q15 format.
  *
  * @details     Computes the Euclidean norm of the 3D vector and scales each component
@@ -433,6 +449,9 @@ void Normalize4DvectorQ15(int16_t *in, int16_t *out);
  */
 void NormalizeQuaternionQ15(const int16_t *q, int16_t *q_out);
 
+int16_t norm_of_4D_vector(const int16_t *q);
+int16_t norm_of_3D_vector(const int16_t *v);
+
 
 /**
  * @brief       Multiplies two quaternions in Q15 format.
@@ -477,6 +496,8 @@ void multiplicateQuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_
  */
 void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]);
 
+void euler_to_quat_Q15(const int16_t pitch, const int16_t roll, const int16_t yaw, int16_t *q);
+
 
 /**
  * @brief       Computes the logarithm of a unit quaternion in Q15 format.
@@ -500,11 +521,13 @@ void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]);
  */
 void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out);
 
+void exponential_mapping_error_Q15(const int16_t *e, int16_t *q);
 
 
 void rotate_quat_sandwich_q15(const int16_t *q1, const int16_t *v_q, const int16_t *q2, int16_t *v_q_out);
 void rotate_vector_Q15(const int16_t *q, const int16_t *v, int16_t *v_out);
 void vector2quaternion_q15(const int16_t *v, int16_t *q);
+void minimal_rotation(const int16_t *a, const int16_t *b, int16_t *q_out);
 
 
 void nLERP_quaternion_Q15(const int16_t *q1, const int16_t *q2, const int16_t beta, int16_t *q_out);

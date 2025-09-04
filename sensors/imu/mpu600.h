@@ -74,5 +74,6 @@ void MPU6000_Get_data_IT(sensor_fusion * pHandler_sf);
 
 void MPU6000_Service(void);
 
+uint8_t calculate_offset_values_imu(void);
 
 #endif /* IMU_MPU600_H_ */

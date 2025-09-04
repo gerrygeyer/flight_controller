@@ -117,7 +117,7 @@ void Log_ProcessBuffered(void)
 bool Log_Init(void)
 {
 	if (BSP_SD_IsDetected() != SD_PRESENT){
-		HAL_Delay(1);
+//		HAL_Delay(1);
 		return false;
 	}
 
@@ -125,7 +125,7 @@ bool Log_Init(void)
 
     FRESULT fres = f_mount(&FatFs, "", 1);
     if (fres != FR_OK){
-    	HAL_Delay(1);
+//    	HAL_Delay(1);
     	fres = f_mount(&FatFs, "", 1);
     	if (fres != FR_OK) return false;
     }

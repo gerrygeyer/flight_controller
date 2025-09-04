@@ -11,8 +11,12 @@
 #include <sys_math.h>
 #include <stdbool.h>
 #include <sensor_fusion.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define MPU6000_READ_LEN 14  // accel+gyro+temp
+
+bool offset_calc_sucess = 0;
 
 uint8_t mpu6000_dma_buf[MPU6000_READ_LEN];
 volatile bool mpu6000_dma_ready = false;
@@ -37,6 +41,9 @@ volatile uint32_t tx_callback_counter = 0;
 bool mpu6000_data_ready_flag = true;  // gesetzt im EXTI-IRQ
 uint8_t stuck_counter;
 //static uint8_t mpu6000_retry_counter = 0;
+//debug
+int16_xyz gyro_raw;
+
 
 #define MPU6000_RETRY_LIMIT 3
 
@@ -78,18 +85,48 @@ void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
 
 void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
+	static uint8_t offset_value_calc = 0;
     if (hi2c == &MPU6000_I2C && mpu_state == MPU6000_READ_DATA)
     {
     	mpu6000_data_ready_flag = false;
         mpu_state = MPU6000_IDLE;
         read_pending = false;  // ✅ Lesevorgang abgeschlossen
         stuck_counter = 0;
-        if(init_flag_mpu && calculate_offset_values(&imu_offset)){
+        if(offset_value_calc == 0){
+        	offset_value_calc = calculate_offset_values(&imu_offset);
+        }
+        if(init_flag_mpu && (offset_value_calc == 1)){
         	task_imu_sensor_fusion(); // hier wird auf die daten zugegriffen
         }
         // Optional: Callback setzen, z. B.
         // MPU6000_ReadCompleteCallback();
     }
+}
+
+static void LED_heartbeat_fast(void){
+	static uint16_t counter = 0;
+		if(counter > 256){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // LED AN
+		}else{
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // LED AUS
+		}
+	counter++;
+	if(counter > 512) counter = 0;
+
+
+}
+
+uint8_t calculate_offset_values_imu(void){
+	uint32_t dummy_counter = 0;
+	if (calculate_offset_values(&imu_offset)){
+		return 1;
+	}else{
+		// do nothing
+
+		dummy_counter++;
+		if(dummy_counter > 100000UL) return 1;
+	}
+	return 0;
 }
 
 
@@ -183,6 +220,10 @@ void MPU6000_Get_data_IT(sensor_fusion * pHandler_sf){
 	gyro.x  = pHandler_sf->gyro_t.x = (int16_t)(imu_data[8] << 8 | imu_data[9]) - imu_offset.gyro.x;
 	gyro.y	= pHandler_sf->gyro_t.y = (int16_t)(imu_data[10] << 8 | imu_data[11]) - imu_offset.gyro.y;
 	gyro.z	= pHandler_sf->gyro_t.z = (int16_t)(imu_data[12] << 8 | imu_data[13]) - imu_offset.gyro.z;
+
+	gyro_raw.x = (int16_t)(imu_data[8] << 8 | imu_data[9]);
+	gyro_raw.y = (int16_t)(imu_data[10] << 8 | imu_data[11]);
+	gyro_raw.z = (int16_t)(imu_data[12] << 8 | imu_data[13]);
 }
 
 
@@ -209,9 +250,9 @@ HAL_StatusTypeDef MPU6000_Init(void) {
     MPU6000_Write(MPU6000_REG_PWR_MGMT_1, 0x80);
     HAL_Delay(100);
 
-    if(HAL_I2C_IsDeviceReady(&MPU6000_I2C, MPU6000_I2C_ADDR, 3, HAL_MAX_DELAY)!= HAL_OK){
-    	HAL_Delay(1);
-    }
+//    if(HAL_I2C_IsDeviceReady(&MPU6000_I2C, MPU6000_I2C_ADDR, 3, HAL_MAX_DELAY)!= HAL_OK){
+//    	HAL_Delay(1);
+//    }
 
     // Wake-Up & Clock Source = Gyro Z
     MPU6000_Write(MPU6000_REG_PWR_MGMT_1, 0x01);
@@ -242,30 +283,67 @@ HAL_StatusTypeDef MPU6000_Init(void) {
 
 
 static uint8_t calculate_offset_values(OFFSET_ACC_GYRO *pHandle){
-	static uint8_t imu_data_counter = 0;
+	static uint16_t imu_data_counter = 0;
 	static uint8_t data_ready = 0;
-	if(data_ready == 1) return 1;
+	static xyz_32t acc_offset = {0};
+	static xyz_32t gyro_offset = {0};
+	static uint8_t fail_counter = 0;
+	xyz_16t result_values_gyro;
+	OFFSET_ACC_GYRO imu_data;
 
-	if(imu_data_counter < 100){
-		OFFSET_ACC_GYRO imu_data;
-		imu_data_counter++;
-		imu_data = MPU6000_ReadAccelGyro_offset();
-		pHandle->acc.x += imu_data.acc.x;
-		pHandle->acc.y += imu_data.acc.y;
-		pHandle->acc.z += imu_data.acc.z;
-		pHandle->gyro.x += imu_data.gyro.x;
-		pHandle->gyro.y += imu_data.gyro.y;
-		pHandle->gyro.z += imu_data.gyro.z;
-	}else{
-		pHandle->acc.x /= 100;
-		pHandle->acc.y /= 100;
-		pHandle->acc.z /= 100;
-		pHandle->acc.z = pHandle->acc.z - 2048;
-		pHandle->gyro.x /= 100;
-		pHandle->gyro.y /= 100;
-		pHandle->gyro.z /= 100;
-		data_ready = 1;
+	LED_heartbeat_fast();
+
+	imu_data = MPU6000_ReadAccelGyro_offset();
+
+	if(data_ready == 1){
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // LED AUS
+		return 1;
 	}
+
+if(init_flag_mpu){
+	if(imu_data_counter < 1000){
+
+		imu_data_counter++;
+		acc_offset.x += imu_data.acc.x;
+		acc_offset.y += imu_data.acc.y;
+		acc_offset.z += imu_data.acc.z;
+		gyro_offset.x += imu_data.gyro.x;
+		gyro_offset.y += imu_data.gyro.y;
+		gyro_offset.z += imu_data.gyro.z;
+	}else{
+		pHandle->acc.x = acc_offset.x/1000;
+		pHandle->acc.y = acc_offset.y/1000;
+		pHandle->acc.z = acc_offset.z/1000;
+		pHandle->acc.z = pHandle->acc.z - 2048;
+		pHandle->gyro.x = gyro_offset.x/1000;
+		pHandle->gyro.y = gyro_offset.y/1000;
+		pHandle->gyro.z = gyro_offset.z/1000;
+
+		result_values_gyro.x = imu_data.gyro.x - pHandle->gyro.x;
+		result_values_gyro.y = imu_data.gyro.y - pHandle->gyro.y;
+		result_values_gyro.z = imu_data.gyro.z - pHandle->gyro.z;
+
+		if((abs(result_values_gyro.x) + abs(result_values_gyro.y) + abs(result_values_gyro.z)) > 10){
+			imu_data_counter = 0;
+			fail_counter++;
+
+			acc_offset.x = 0;
+			acc_offset.y = 0;
+			acc_offset.z = 0;
+			gyro_offset.x = 0;
+			gyro_offset.y = 0;
+			gyro_offset.z = 0;
+		}else{
+			fail_counter = 0;
+			data_ready = 1;
+			offset_calc_sucess = 1;
+		}
+		if(fail_counter > 200){
+			// error
+			return 1;
+		}
+	}
+}
 	return 0;
 }
 

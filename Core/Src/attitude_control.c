@@ -12,6 +12,7 @@
 #include <sys_math.h>
 #include <settings.h>
 #include <task.h>
+#include <sensor_fusion.h>
 
 #include <string.h>
 
@@ -116,14 +117,14 @@ void init_attitude_control(void){
 
 //	drone_parameter.Jz_y_div_x = drone_parameter.Jzz - drone_parameter.Jyy
 
-	gain.P1.pitch = 4.5f;
-	gain.P1.roll = 4.5f;
-	gain.P1.yaw = 0.2f;
+	gain.P1.pitch = 5.0f;
+	gain.P1.roll = 5.0f;
+	gain.P1.yaw = 0.01f;
 
 
-	gain.P2.pitch = 0.05;
-	gain.P2.roll = 0.05;
-	gain.P2.yaw = 0.01;
+	gain.P2.pitch = 1.0;
+	gain.P2.roll = 1.0;
+	gain.P2.yaw = 0.05;
 
 
 }
@@ -274,30 +275,54 @@ void generate_RPM_commands_Q15(int16_t *w, motor_t *pHandle_motor){
  * @warning		[Optional: z. B. darf nur nach Init aufgerufen werden]
  * @see			andere_funktion() [Optionaler Verweis]
  */
-static inline copy_q(const int16_t *q_in, int16_t *q_copy){
+static inline void copy_q(const int16_t *q_in, int16_t *q_copy){
 	q_copy[0] = q_in[0];
 	q_copy[1] = q_in[1];
 	q_copy[2] = q_in[2];
 	q_copy[3] = q_in[3];
 }
 
-static void speed_IIR_LP_filter_Q15(int16_t * w){
-	static int32_t a = (int16_t)(0.6013f * (float)Q15);
+static inline void neg_q_Q15(int16_t *q){
+	q[0] = -q[0];
+	q[1] = -q[1];
+	q[2] = -q[2];
+	q[3] = -q[3];
+}
+
+static inline void quat_div_2_Q15(int16_t *q){
+	q[0] = Q1_SHIFT_ROUND(q[0]);
+	q[1] = Q1_SHIFT_ROUND(q[1]);
+	q[2] = Q1_SHIFT_ROUND(q[2]);
+	q[3] = Q1_SHIFT_ROUND(q[3]);
+}
+
+static inline void multQuatwithConstQ15(int16_t* q, const int16_t x){
+	q[0] = q15_mul(q[0], x);
+	q[1] = q15_mul(q[1], x);
+	q[2] = q15_mul(q[2], x);
+	q[3] = q15_mul(q[3], x);
+}
+
+
+
+static void speed_IIR_LP_filter_Q15(const int16_t * w, int16_t *w_out){
+//	static int32_t a = (int16_t)(0.6013f * (float)Q15);
 	static int32_t w_old[4] = {0};
+	const int32_t a =  6581; // Ts = 1/500 , fc = 2Hz
 
 	int32_t x;
-	x = ((a* w[0]+(1<<14)) >> 15) + (((int32_t)(Q15-a) * w_old[0] + (1<<14)) >> 15);
-	w[0] = w_old[0] = CLAMP_INT32_TO_INT16(x);
+	x = Q15_SHIFT_ROUND(a* w[0]) + (Q15_SHIFT_ROUND((int32_t)(Q15-a) * w_old[0]));
+	w_out[0] = w_old[0] = CLAMP_INT32_TO_INT16(x);
 
 
-	x = ((a* w[1]+(1<<14)) >> 15) + (((int32_t)(Q15-a) * w_old[1] + (1<<14)) >> 15);
-	w[1] = w_old[1] = CLAMP_INT32_TO_INT16(w[1]);
+	x = Q15_SHIFT_ROUND(a* w[1]) + Q15_SHIFT_ROUND((int32_t)(Q15-a) * w_old[1]);
+	w_out[1] = w_old[1] = CLAMP_INT32_TO_INT16(x);
 
-	x = ((a* w[2]+(1<<14)) >> 15) + (((int32_t)(Q15-a) * w_old[2] + (1<<14)) >> 15);
-	w[2] = w_old[2] = CLAMP_INT32_TO_INT16(w[2]);
+	x = Q15_SHIFT_ROUND(a* w[2]) + Q15_SHIFT_ROUND((int32_t)(Q15-a) * w_old[2]);
+	w_out[2] = w_old[2] = CLAMP_INT32_TO_INT16(x);
 
-	x = ((a* w[3]+(1<<14)) >> 15) + (((int32_t)(Q15-a) * w_old[3] + (1<<14)) >> 15);
-	w[3] = w_old[3] = CLAMP_INT32_TO_INT16(w[3]);
+	x = Q15_SHIFT_ROUND(a * w[3]) + Q15_SHIFT_ROUND((int32_t)(Q15-a) * w_old[3]);
+	w_out[3] = w_old[3] = CLAMP_INT32_TO_INT16(x);
 }
 
 /**
@@ -343,8 +368,8 @@ static void differential_with_scaling_q15(const int16_t *val, const int16_t *val
 
 void attitude_control_quaternion_lqr_q15(const int16_t *q,const int16_t *q_ref, const int16_t *w_gyro_t, int16_t *tau){
 
-int16_t q_inv[4],q_ref_inv[4], q_err[4], q_err_inv[4], ln_q[3],w[4], w_err[4], diff_err[4], diff_q[4], x_err[6], u_lqr[3];
-static int16_t q_err_last_value[4], q_last_value[4], q_last_last_value[4];
+int16_t q_inv[4],q_ref_inv[4], q_err[4], q_err_inv[4], ln_q[3],w[4], w_err[4], diff_err[4],diff_err_filt[4], diff_q[4], x_err[6], u_lqr[3];
+static int16_t q_err_last_value[4], q_last_value[4];
 static uint8_t q_count= 0;
 
 //memcpy(q_ref_inv, q_ref,sizeof(q_inv));
@@ -369,15 +394,15 @@ debug_q_err_old.x = q_err_last_value[1];
 debug_q_err_old.y = q_err_last_value[2];
 debug_q_err_old.z = q_err_last_value[3];
 
-differential_with_scaling_q15(q_err, q_err_last_value,0, ATTITUDE_FREQUENCY, diff_err); // RAD_MAX_32
-speed_IIR_LP_filter_Q15(diff_err);
-multiplicateQuaternionQ15(q_err_inv,diff_err,w_err);
+differential_with_scaling_q15(q_err, q_err_last_value,(ATTITUDE_FREQUENCY),5, diff_err); // RAD_MAX_32
+speed_IIR_LP_filter_Q15(diff_err,diff_err_filt);
+multiplicateQuaternionQ15(q_err_inv,diff_err_filt,w_err);
 
 
-debug_diff_err1 = diff_err[0];
-debug_diff_err2 = diff_err[1];
-debug_diff_err3 = diff_err[2];
-debug_diff_err4 = diff_err[3];
+debug_diff_err1 = diff_err_filt[0];
+debug_diff_err2 = diff_err_filt[1];
+debug_diff_err3 = diff_err_filt[2];
+debug_diff_err4 = diff_err_filt[3];
 
 x_err[0] = ln_q[0];
 x_err[1] = ln_q[1];
@@ -404,26 +429,27 @@ debug_u_lqr3 = u_lqr[2];
 //memcpy(q_inv, q, 4 * sizeof(int16_t));
 copy_q(q, q_inv);
 q_t_conj_function(q_inv);
-differential_with_scaling_q15(q, q_last_value,0,ATTITUDE_FREQUENCY, diff_q); // RAD_MAX_32
+differential_with_scaling_q15(q, q_last_value,(ATTITUDE_FREQUENCY),5, diff_q); // RAD_MAX_32
 
 multiplicateQuaternionQ15(q_inv,diff_q,w);
 
 
 feedback_linearisation(u_lqr, w_gyro_t, &drone_parameter, tau);
 
+//if(q_count++ > 10){
 q_err_last_value[0] = q_err[0];
 q_err_last_value[1] = q_err[1];
 q_err_last_value[2] = q_err[2];
 q_err_last_value[3] = q_err[3];
 //copy_q(q, q_last_value);
 
-if(q_count++ > 10){
+
 q_last_value[0] = q[0];
 q_last_value[1] = q[1];
 q_last_value[2] = q[2];
 q_last_value[3] = q[3];
-q_count = 0;
-}
+//q_count = 0;
+//}
 
 }
 
@@ -444,11 +470,22 @@ q_count = 0;
 
 >>
  */
+
+//const int16_t K_q10[3][6] = {
+//    {24919,     0,     0,  23989,     0,     0},
+//    {    0, 24919,     0,     0, 12492,     0},
+//    {    0,     0, 11747,     0,     0, 14744}
+//};
+
 const int16_t K_q10[3][6] = {
-    {24919,     0,     0,  23989,     0,     0},
-    {    0, 24919,     0,     0, 12492,     0},
-    {    0,     0, 11747,     0,     0, 14744}
+    {  5871,      0,      0,  26666,      0,      0},
+    {     0,   5609,      0,      0,  19000,      0},
+    {     0,      0,   1322,      0,      0,  10371}
 };
+
+
+
+
 
 //const int16_t J = [0.012273 0         0;
 //0         0.012526 0;
@@ -479,7 +516,7 @@ static void lqr_q15(const int16_t *x_error,int16_t *u_out){
 		x = (int32_t)K_q10[i][5] * x_error[5];
 		sum += (x >> 2); // Q23
 
-		sum = ((sum + (1 << 12)) >> 13); // back to Q10 -> u_max = Q5
+		sum = Q13_SHIFT_ROUND(sum); // back to Q15 //-> u_max = Q5
 		u_out[i] = -CLAMP_INT32_TO_INT16(sum);
 	}
 }
@@ -515,21 +552,21 @@ static void feedback_linearisation(const int16_t *u,const int16_t *w,system_para
 	// input w, max speed ist 34,9 rad/s
 	// scaling the result with Q5
 
-	x = (pHandle->Jxx << 5) * (int32_t)u[0]; // Q20 * Q10 = Q30
+	x = (pHandle->Jxx) * (int32_t)u[0]; // Q20 * Q10 = Q30
 	y = (((int32_t)w[2] * (int32_t)w[1])/27); // Q15/(34.9)^2 = 26.9
-	y = (y * (int32_t)(pHandle->Jzz - pHandle->Jyy));
+	y = (y * (int32_t)(pHandle->Jzz - pHandle->Jyy)) >> 5;
 //	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
 	tau[0] = CLAMP((x + y) >> 15, -Q15,Q15);
 // ab hier
-	x = (pHandle->Jyy << 5) * (int32_t)u[1]; // Q20 * Q10 = Q30
+	x = (pHandle->Jyy) * (int32_t)u[1]; // Q20 * Q10 = Q30
 	y = (((int32_t)w[2] * (int32_t)w[0])/27); // Q15/(34.9)^2 = 26.9
-	y = (y * (int32_t)(pHandle->Jxx - pHandle->Jzz));
+	y = (y * (int32_t)(pHandle->Jxx - pHandle->Jzz)) >> 5;
 //	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
 	tau[1] = CLAMP((x + y) >> 15, -Q15,Q15);
 
-	x = (pHandle->Jzz << 5) * (int32_t)u[2]; // Q20 * Q10 = Q30
+	x = (pHandle->Jzz) * (int32_t)u[2]; // Q20 * Q10 = Q30
 	y = (((int32_t)w[0] * (int32_t)w[1])/27); // Q15/(34.9)^2 = 26.9
-	y = (y * (int32_t)(pHandle->Jyy - pHandle->Jxx));
+	y = (y * (int32_t)(pHandle->Jyy - pHandle->Jxx)) >> 5;
 //	y = (y >> 5); //unit of y is torque, we scale torque as Q15/max_torque and max_torque is 32 (Q5)
 	tau[2] = CLAMP((x + y) >> 15, -Q15,Q15);
 
@@ -585,7 +622,7 @@ void get_motor_speed_from_u(const int32_t *u, int16_t *w_rpm, motor_t *pHandle_m
 
 
 static inline int16_t q15_mul(int16_t a, int16_t b) {
-    return (int16_t)(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
+    return CLAMP_INT32_TO_INT16(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
 }
 
 
@@ -657,7 +694,7 @@ static void iir_filter_gyro(const int16_t *gyro_raw, int16_t *gyro_filter){
 }
 
 void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q_ref, const int16_t *w_gyro_t, int16_t *tau){
-	int16_t q_reff[4], q_con[4], q_err[4], gyro_filter[3];
+	int16_t q_reff[4], q_con[4], q_err[4], gyro_filter[3], gyro_small[3];
 	int32_t out[3];
 
 	copy_q(q_ref,q_reff);
@@ -666,7 +703,15 @@ void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q
 	q_t_flipp(q_reff);
 	multiplicateQuaternionQ15(q_reff, q_con, q_err);
 
-	iir_filter_gyro(w_gyro_t,gyro_filter);
+//	iir_filter_gyro(w_gyro_t,gyro_filter);
+	gyro_filter[0] = q15_mul(w_gyro_t[0], GRAD2RAD_GYRO_MAX_Q15);
+	gyro_filter[1] = q15_mul(w_gyro_t[1], GRAD2RAD_GYRO_MAX_Q15);
+	gyro_filter[2] = q15_mul(w_gyro_t[2], GRAD2RAD_GYRO_MAX_Q15);
+
+	gyro_small[0]  = (w_gyro_t[0] >> 3);
+	gyro_small[1]  = (w_gyro_t[1] >> 3);
+	gyro_small[2]  = (w_gyro_t[2] >> 3);
+
 
 	debug_gyro_x = gyro_filter[0];
 	debug_gyro_y = gyro_filter[1];
@@ -676,13 +721,38 @@ void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q
 	out[1] = -q15_mul(q_err[2],(int16_t)(gain.P1.roll * (float)Q10));
 	out[2] = -q15_mul(q_err[3],(int16_t)(gain.P1.yaw * (float)Q10));
 
-	out[0] -= w_gyro_t[0] * (int16_t)(gain.P2.pitch * 34.9f);
-	out[1] -= w_gyro_t[1] * (int16_t)(gain.P2.roll * 34.9f);
-	out[2] -= w_gyro_t[2] * (int16_t)(gain.P2.yaw * 34.9f);
+	out[0] -= q15_mul(gyro_small[0],CLAMP_INT32_TO_INT16((int32_t)(gain.P2.pitch * (float)Q15)));
+	out[1] -= q15_mul(gyro_small[1],CLAMP_INT32_TO_INT16((int32_t)(gain.P2.roll * (float)Q15)));
+	out[2] -= q15_mul(gyro_small[2],CLAMP_INT32_TO_INT16((int32_t)(gain.P2.yaw * (float)Q15)));
 
-	tau[0] = CLAMP_INT32_TO_INT16(out[0]);
-	tau[1] = CLAMP_INT32_TO_INT16(out[1]);
-	tau[2] = CLAMP_INT32_TO_INT16(out[2]);
+	tau[0] = out[0];
+	tau[1] = out[1];
+	tau[2] = out[2];
+}
+
+
+void filter_SLERP_EMA_quaternion_Q15(const int16_t *q_in, int16_t *q_out){
+
+	const int16_t a_div2 = 3641; // fc = 5 Hz, Ts = 1/500, a_div2 = a/2
+	static int16_t q_last[4] = {0};
+	int16_t dot, q[4], q_last_con[4], q_err[4], e[3], delta_q[4];
+	copy_q(q_in, q);
+
+	dotporduct_4x4_Q15(q_last,q, &dot);
+	if(dot < 0) neg_q_Q15(q);
+	q_t_conj_function_in_out_q15(q_last,q_last_con);
+	multiplicateQuaternionQ15(q_last_con, q, q_err);
+
+	ln_q15_unit_quaternions_multiplicate_2(q_err,e);
+//	quat_div_2_Q15(e);
+	multQuatwithConstQ15(e,a_div2);
+
+	exponential_mapping_error_Q15(e,delta_q);
+	multiplicateQuaternionQ15(q_last, delta_q, q_out);
+
+	NormalizeQuaternionQ15(q_out, q_out);
+
+	copy_q(q_out, q_last);
 }
 
 

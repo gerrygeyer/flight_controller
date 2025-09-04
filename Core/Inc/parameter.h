@@ -12,6 +12,9 @@
 #include <stdbool.h>
 
 #define ATTITUDE_FREQUENCY	500 // Hz
+#define POSITION_FREQUENCY	100 // Hz
+
+#define POS_FREQ_DIV		5 // 500 / 100
 
 #define OK			0
 #define NOT_OK		1
@@ -24,6 +27,9 @@
 
 #define LQR 		0x01
 #define PID			0x02
+
+#define DRONE		0
+#define IMU			1
 
 #define STEP_FUNCTION		0
 #define RAMP_FUNCTION		1
@@ -67,6 +73,15 @@
 
 // LQR Control
 #define W_TRIM_RPM	4000
+
+
+
+
+
+
+
+
+
 
 // typedef structs
 typedef struct{
@@ -243,6 +258,27 @@ typedef struct
 	at_angl_f P2; /**< FieldDesc2 */
 
 } P2_attitude_control;
+
+/**
+ * @brief Optical Flow Sensor
+ * @note  Included the important data
+ * @see   ReferenzOderModulname
+ */
+typedef struct
+{
+	uint16_t deltaT; /**< Time between last measurement */
+	uint32_t distance; /**< FieldDesc2 */
+	uint8_t dist_strenght; /**< FieldDesc2 */
+	uint8_t dist_pres; /**< FieldDesc2 */
+	int32_t flow_vel_x; /**< velocity in x direction in m/s */
+	int32_t flow_vel_y; /**< velocity in y direction in m/s */
+	uint8_t flow_qual; /**< FieldDesc3 */
+	uint8_t flow_stat; /**< FieldDesc3 */
+} optical_flow_data;
+
+
+
+
 
 
 #endif /* INC_PARAMETER_H_ */

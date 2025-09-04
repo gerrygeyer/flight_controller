@@ -24,7 +24,7 @@
 
 #define GRAD2RAD_GYRO 	34.906585f
 #define GRAD2RAD_GYRO_MAX_Q15 	939 // (1/2000'°/s')* (2*pi/360°) -> Gyro * 938.7341; max output = 34,9 rad/s
-
+#define GRAD2RAD_GYR_MAX_SC_Q15	7510 //GRAD2RAD_GYRO_MAX_Q15 << 3
 /*
  * normierter_wert = deg_per_sec / 2000
 → also: (rad_per_sec * 180 / π) / 2000

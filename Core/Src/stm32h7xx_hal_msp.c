@@ -29,8 +29,6 @@ extern DMA_HandleTypeDef hdma_uart7_rx;
 
 extern DMA_HandleTypeDef hdma_uart8_rx;
 
-extern DMA_HandleTypeDef hdma_uart8_tx;
-
 extern DMA_HandleTypeDef hdma_usart1_tx;
 
 extern DMA_HandleTypeDef hdma_usart2_tx;
@@ -468,7 +466,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
     PE0     ------> UART8_RX
     PE1     ------> UART8_TX
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
+    GPIO_InitStruct.Pin = OPTICAL_FLOW_8RX_Pin|OPTICAL_FLOW_8TX_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -493,24 +491,6 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
     }
 
     __HAL_LINKDMA(huart,hdmarx,hdma_uart8_rx);
-
-    /* UART8_TX Init */
-    hdma_uart8_tx.Instance = DMA1_Stream6;
-    hdma_uart8_tx.Init.Request = DMA_REQUEST_UART8_TX;
-    hdma_uart8_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    hdma_uart8_tx.Init.PeriphInc = DMA_PINC_DISABLE;
-    hdma_uart8_tx.Init.MemInc = DMA_MINC_ENABLE;
-    hdma_uart8_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-    hdma_uart8_tx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-    hdma_uart8_tx.Init.Mode = DMA_NORMAL;
-    hdma_uart8_tx.Init.Priority = DMA_PRIORITY_LOW;
-    hdma_uart8_tx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
-    if (HAL_DMA_Init(&hdma_uart8_tx) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    __HAL_LINKDMA(huart,hdmatx,hdma_uart8_tx);
 
     /* UART8 interrupt Init */
     HAL_NVIC_SetPriority(UART8_IRQn, 0, 0);
@@ -827,11 +807,10 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* huart)
     PE0     ------> UART8_RX
     PE1     ------> UART8_TX
     */
-    HAL_GPIO_DeInit(GPIOE, GPIO_PIN_0|GPIO_PIN_1);
+    HAL_GPIO_DeInit(GPIOE, OPTICAL_FLOW_8RX_Pin|OPTICAL_FLOW_8TX_Pin);
 
     /* UART8 DMA DeInit */
     HAL_DMA_DeInit(huart->hdmarx);
-    HAL_DMA_DeInit(huart->hdmatx);
 
     /* UART8 interrupt DeInit */
     HAL_NVIC_DisableIRQ(UART8_IRQn);

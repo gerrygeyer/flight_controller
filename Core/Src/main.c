@@ -28,6 +28,7 @@
 
 #include <log_data.h>
 #include <stdio.h>
+#include <settings.h>
 
 /* USER CODE END Includes */
 
@@ -63,7 +64,6 @@ UART_HandleTypeDef huart6;
 DMA_HandleTypeDef hdma_uart5_rx;
 DMA_HandleTypeDef hdma_uart7_rx;
 DMA_HandleTypeDef hdma_uart8_rx;
-DMA_HandleTypeDef hdma_uart8_tx;
 DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart2_tx;
 DMA_HandleTypeDef hdma_usart3_tx;
@@ -97,14 +97,19 @@ static void MX_I2C4_Init(void);
 static void MX_LPUART1_UART_Init(void);
 static void MX_UART7_Init(void);
 static void MX_UART8_Init(void);
-static void MX_SDMMC1_SD_Init(void);
+static void MX_SDMMC1_SD_Init(void); // KOMMENTIEREN
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void DWT_Init(void)
+{
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk; // Trace aktivieren
+    DWT->CYCCNT = 0;                                // Reset
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;            // Counter einschalten
+}
 /* USER CODE END 0 */
 
 /**
@@ -127,7 +132,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+//  DWT_Init();
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -153,57 +158,17 @@ int main(void)
   MX_LPUART1_UART_Init();
   MX_UART7_Init();
   MX_UART8_Init();
-  MX_SDMMC1_SD_Init();
-  MX_FATFS_Init();
+//  MX_SDMMC1_SD_Init(); // KOMMENTIEREMN
+//  MX_FATFS_Init();	// KOMMENTIEREN
   /* USER CODE BEGIN 2 */
-  // Takt auf 400 kHz begrenzen für Initialisierung
-//  __HAL_SD_DISABLE(&hsd1);
-//  hsd1.Instance->CLKCR &= ~SDMMC_CLKCR_CLKDIV;
-//  hsd1.Instance->CLKCR |= 375;
-//  __HAL_SD_ENABLE(&hsd1);
- // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // Diode D2 0 -> ON; 1 -> OFF;
-//  HAL_Delay(4000)
 
-//  FATFS fs;
-//  FIL fil;
-//  FRESULT fres;
-//  UINT br, bw;
-//
-//  f_mount(&fs, "", 0);  // Mount SD-Karte
-//
-//  // Datei öffnen/erstellen
-//  fres = f_open(&fil, "log.txt", FA_WRITE | FA_CREATE_ALWAYS);
-//  if (fres == FR_OK) {
-//      char text[] = "Hallo von der STM32!";
-//      f_write(&fil, text, strlen(text), &bw);
-//      f_close(&fil);
-//  }
-  // Vor Log_Init():
-//  HAL_NVIC_DisableIRQ(EXTI2_IRQn);
-//  HAL_NVIC_DisableIRQ(EXTI4_IRQn);
-//  HAL_NVIC_DisableIRQ(EXTI9_5_IRQn);
-//
-//HAL_Delay(500);
-//  HAL_Delay(10);
-//  while (HAL_SD_GetCardState(&hsd1) != HAL_SD_CARD_TRANSFER) {
-//      HAL_Delay(1);
-//  }
-//  HAL_Delay(10);
 
-  // TEST
-//  uint8_t buffer[512];
-//  HAL_StatusTypeDef status = HAL_SD_ReadBlocks(&hsd1, buffer, 0, 1, HAL_MAX_DELAY);
-//  if (status != HAL_OK) {
-//      // Hardwarezugriff schlägt fehl
-//      while (1);  // Fehler
-//  }
-  // TEST ENDE
-  bool ok = Log_Init(); // hier ist die änderung
 
-  // Danach EXTI wieder aktivieren
-//  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
-//  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
-//  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET); // LED AN
+//  __disable_irq();
+if(LOG_DATA){
+  bool ok = Log_Init(); // KOMMENTIEREN
+}
 
 
 //	  HAL_UART_Init(&huart1);
@@ -227,25 +192,20 @@ int main(void)
 	}
 
 
-//  uint16_t status = 0xAA;
-//  int16_t speed = 5000;
-//  uint8_t x[4];
-//  x[0] = 0xFF;                       // Startbyte zur Validierung
-//  x[1] = status;                      // Status
-//  x[2] = (uint8_t)(speed >> 8);       // Höheres Byte der Geschwindigkeit
-//  x[3] = (uint8_t)(speed & 0xFF);     // Niederes Byte der Geschwindigkeit
-//
-//  if(HAL_UART_Transmit(&huart1, x, sizeof(x), HAL_MAX_DELAY) != HAL_OK){
-//	  Error_Handler();
-//  }
-
-
 
 
   task_init();
+
+//  __enable_irq();
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // LED AN
+
+
   if(HAL_TIMEx_PWMN_Start_IT(&htim1, TIM_CHANNEL_1) != HAL_OK){
 	  Error_Handler();
   }
+
+
+
 //  uint8_t send_data[3];
 //
 //  send_data[0] = 0b00100100;
@@ -257,9 +217,10 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  if(LOG_DATA){
 	  log_data_if_ready();
 	    Log_ProcessBuffered();   // schreibt Puffer zur SD-Karte
-
+}
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -632,7 +593,7 @@ static void MX_UART8_Init(void)
 
   /* USER CODE END UART8_Init 1 */
   huart8.Instance = UART8;
-  huart8.Init.BaudRate = 3000000;
+  huart8.Init.BaudRate = 115200;
   huart8.Init.WordLength = UART_WORDLENGTH_8B;
   huart8.Init.StopBits = UART_STOPBITS_1;
   huart8.Init.Parity = UART_PARITY_NONE;
@@ -1041,9 +1002,6 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
-  /* DMA1_Stream6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
   /* DMA1_Stream7_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream7_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream7_IRQn);

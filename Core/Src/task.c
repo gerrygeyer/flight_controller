@@ -27,7 +27,7 @@ uint8_t control_flag, stop_flag;
 
 
 
-wxyz_16t system_q;
+wxyz_16t system_q, system_q_ref;
 int16_t q_yaw_correction[4], q_axis_correction[4];
 
 motor_signals_16t motor_seed_esc;
@@ -38,7 +38,12 @@ int16_t debug_speed_counter = 0;
 xyz_16t debug_w;
 float euler_debug_ax_roll, euler_debug_ax_pitch,euler_debug_ax_yaw;
 
+at_angl_f debug_ref_euler, debug_sys_euler;
+
 static void highspeed_task(void);
+static void LED_heartbeat(bool flag);
+static void sysetem_ready_check(bool *flag, const int16_t *q);
+static void get_control_quaternion_from_euler_command(at_control_f euler, int16_t *q_ref);
 
 void task_init(void){
 
@@ -75,7 +80,10 @@ void task_init(void){
 	control_flag = OFF;
 	stop_flag = OFF;
 
+	HAL_Delay(80);
 
+
+//	calculate_offset_values_imu();
 
 }
 /**
@@ -96,6 +104,7 @@ void time_management(void){
 	service_functions();
 	highspeed_task();
 }
+wxyz_16t q_filter;
 
 /**
  * @brief		Highspeed Task
@@ -108,6 +117,8 @@ static void highspeed_task(void){
 	int16_t tau[3], u[4];
 	float u_f[4][1], w_f[4][1];
 	static int32_t ramp_speed = 0;
+
+	static bool system_ready = 0;
 	// debug
 	int16_t euler[3];
 
@@ -117,17 +128,33 @@ static void highspeed_task(void){
 	debug_w.x = w[0];
 	debug_w.y = w[1];
 	debug_w.z = w[2];
+
+	if(POSTFILTER_ATT){
+		filter_SLERP_EMA_quaternion_Q15(q, q);
+	}
+//	if(q[0]<0){
+//		q[0] = -q[0];
+//		q[1] = -q[1];
+//		q[2] = -q[2];
+//		q[3] = -q[3];
+//	}
+	q_filter.w = q[0];
+	q_filter.x = q[1];
+	q_filter.y = q[2];
+	q_filter.z = q[3];
 //	correct_q_axis(q,w);
 
 	quat_to_euler_q15(q, euler);
-	euler_debug_ax_roll = (float)euler[0];//* 360.0f / (float)INT16_MAX;
-	euler_debug_ax_pitch = (float)euler[1];//* 360.0f / (float)INT16_MAX;
-	euler_debug_ax_yaw = (float)euler[2];//* 360.0f / (float)INT16_MAX;
+	euler_debug_ax_roll = (float)euler[0] * 180.0f / (float)Q15;
+	euler_debug_ax_pitch = (float)euler[1] * 180.0f / (float)Q15;
+	euler_debug_ax_yaw = (float)euler[2] * 180.0f / (float)Q15;
 //	correct_q_axis
 
 	motor_seed_esc = get_motorspeed_from_ESC();
 
 
+	sysetem_ready_check(&system_ready, q);
+	LED_heartbeat(system_ready);
 
 	switch(system_state){
 
@@ -212,19 +239,39 @@ static void highspeed_task(void){
 		}
 		control_signals_counter += 1;
 
+		get_control_quaternion_from_euler_command(attitude_control_signals,q_att_ref);
+
 //		q_att_ref[0] = (int16_t)( 0.9818f * Q15);
 //		q_att_ref[1] = (int16_t)( 0.0641 * Q15);
 //		q_att_ref[2] = (int16_t)( -0.1436 * Q15);
 //		q_att_ref[3] = (int16_t)( 0.1060 * Q15);
 
-		q_att_ref[0] = (int16_t)( 1.0f * Q15);
-		q_att_ref[1] = (int16_t)( 0.0f * Q15);
-		q_att_ref[2] = (int16_t)( 0.0f * Q15);
-		q_att_ref[3] = (int16_t)( 0.0f * Q15);
+//		q_att_ref[0] = (int16_t)( 1.0f * Q15);
+//		q_att_ref[1] = (int16_t)( 0.0f * Q15);
+//		q_att_ref[2] = (int16_t)( 0.0f * Q15);
+//		q_att_ref[3] = (int16_t)( 0.0f * Q15);
+
+		system_q_ref.w = q_att_ref[0];
+		system_q_ref.x = q_att_ref[1];
+		system_q_ref.y = q_att_ref[2];
+		system_q_ref.z = q_att_ref[3];
 //		q_att_ref[0] = (int16_t)(13731);
 //		q_att_ref[1] = (int16_t)(-15570);
 //		q_att_ref[2] = (int16_t)(12978);
 //		q_att_ref[3] = (int16_t)(21780);
+
+
+		// only debug/control:
+		int16_t euler_ref_debug[3], euler_sys_debug[3];
+		quat_to_euler_q15(q_att_ref,euler_ref_debug);
+		debug_ref_euler.pitch = (float)euler_ref_debug[0] * 360.0f / (float)Q15;
+		debug_ref_euler.roll = (float)euler_ref_debug[1] * 360.0f / (float)Q15;
+		debug_ref_euler.yaw = (float)euler_ref_debug[2] * 360.0f / (float)Q15;
+
+		quat_to_euler_q15(q,euler_sys_debug);
+		debug_sys_euler.pitch = (float)euler_sys_debug[0] * 360.0f / (float)Q15;
+		debug_sys_euler.roll = (float)euler_sys_debug[1] * 360.0f / (float)Q15;
+		debug_sys_euler.yaw = (float)euler_sys_debug[2] * 360.0f / (float)Q15;
 
 		switch (ATTITUDE_CONTROL){
 		case ATT_LQR_CONTROL:
@@ -296,7 +343,23 @@ static void highspeed_task(void){
 	break;
 	}
 
+	system_q.w = q[0];
+	system_q.x = q[1];
+	system_q.y = q[2];
+	system_q.z = q[3];
+
 }
+
+POS_COUNTER =5;
+static void middle_speed_task(void){
+	static middle_speed_counter = 0;
+	if(middle_speed_counter++ < POS_COUNTER) return;
+
+
+
+}
+
+
 
 // Function to stop the System
 void system_stop_function(void){
@@ -315,7 +378,11 @@ at_control_f create_attitude_control_signals(void){
 		x = control_signals_counter;
 		x /= TIME_PERIOD;
 
+		const float angle_degree = 15.0f;
+
 		switch (x){
+
+
 
 		case TIME_1:
 			Output.pitch = 0.0;
@@ -324,7 +391,7 @@ at_control_f create_attitude_control_signals(void){
 			break;
 
 		case TIME_2:
-			Output.pitch = 20.0f;
+			Output.pitch = angle_degree;
 			Output.roll = 0.0;
 			Output.yaw = 0.0;
 			break;
@@ -336,7 +403,7 @@ at_control_f create_attitude_control_signals(void){
 			break;
 		case TIME_4:
 			Output.pitch = 0.0;
-			Output.roll = 20.0f;
+			Output.roll = angle_degree;
 			Output.yaw = 0.0;
 			break;
 		case TIME_5:
@@ -347,7 +414,7 @@ at_control_f create_attitude_control_signals(void){
 		case TIME_6:
 			Output.pitch = 0.0;
 			Output.roll = 0.0;
-			Output.yaw = 20.0f;
+			Output.yaw = angle_degree;
 			break;
 		case TIME_7:
 			Output.pitch = 0.0;
@@ -355,9 +422,9 @@ at_control_f create_attitude_control_signals(void){
 			Output.yaw = 0.0;
 			break;
 		case TIME_8:
-			Output.pitch = 15.0f;
-			Output.roll = 15.0f;
-			Output.yaw = 15.0f;
+			Output.pitch = angle_degree/2.0f;//15.0f;
+			Output.roll = angle_degree/2.0f;//15.0f;
+			Output.yaw = angle_degree/2.0f;//15.0f;
 			break;
 		case TIME_9:
 			Output.pitch = 0.0;
@@ -552,5 +619,60 @@ at_control_f create_attitude_control_signals(void){
 
 
 }
+float euler_back_control_pitch, euler_back_control_roll, euler_back_control_yaw;
+int16_t asdf_pitch, asdf_roll,asdf_yaw, asdf_q0, asdf_q1, asdf_q2, asdf_q3;
+static void get_control_quaternion_from_euler_command(at_control_f euler, int16_t *q_ref){
+	int32_t roll, pitch, yaw;
+	roll = CLAMP_INT32_TO_INT16((int32_t)(euler.roll * (float)Q15 / 360.0f));
+	pitch = CLAMP_INT32_TO_INT16((int32_t)(euler.pitch * (float)Q15 / 360.0f));
+	yaw = CLAMP_INT32_TO_INT16((int32_t)(euler.yaw * (float)Q15 / 360.0f));
+	asdf_pitch = pitch;
+	asdf_roll = roll;
+	asdf_yaw = yaw;
+
+	euler_to_quat_Q15(pitch, roll, yaw,q_ref);
+
+	asdf_q0 = q_ref[0];
+	asdf_q1 = q_ref[1];
+	asdf_q2 = q_ref[2];
+	asdf_q3 = q_ref[3];
+
+
+}
+
+
+static void LED_heartbeat(bool flag){
+	static uint16_t counter = 0;
+
+	if(flag == 1){
+		if(counter > 1024){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // LED AN
+		}else{
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // LED AUS
+		}
+	}else{
+		if((counter >> 1) > 512){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // LED AN
+		}else{
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // LED AUS
+		}
+	}
+
+	counter++;
+	if(counter > 2048) counter = 0;
+
+
+}
+
+static void sysetem_ready_check(bool *flag, const int16_t *q){
+	if(!flag){
+		int32_t x = (uint16_t)q[0] + (uint16_t)q[1] + (uint16_t)q[2] + (uint16_t)q[3];
+		if(x > Q14){
+			flag = 1;
+		}
+	}
+
+}
+
 
 

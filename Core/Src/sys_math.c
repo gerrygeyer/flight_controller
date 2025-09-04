@@ -294,6 +294,32 @@ int16_t cos_i(int16_t y){
 	return sin_i(y + INT16_HALF_VALUE);
 }
 
+int16_t sin_Q15(int16_t y){
+	int16_t Output;
+
+	int32_t x_i = ((int32_t)(y * 2048)/ INT16_MAX_VALUE);
+
+	if(x_i < 0){
+		x_i = x_i * (-1);
+		if(x_i > 1024){
+			Output = -sineLookupTable[(2048 - x_i)];
+		}else{
+			Output = -sineLookupTable[x_i];
+		}
+	}else{
+		if(x_i > 1024){
+			Output = sineLookupTable[(2048 - x_i)];
+		}else{
+			Output = sineLookupTable[x_i];
+		}
+	}
+	return Output;
+}
+
+int16_t cos_Q15(int16_t y){
+	return sin_i(y + INT16_HALF_VALUE);
+}
+
 
 /**
  * @brief       Lookup table for arcsine function (asin) in Q15 format.
@@ -348,6 +374,7 @@ const int16_t asin_q15_lut[256] = {
 
 
 // x ∈ [-32768, +32767]  ⇒ Bereich [-1, +1]
+// OUTPUT is PI/2 NOT PI
 int16_t q15_asin(int16_t x) {
 	bool sign = 0;
     if (x < 0) {
@@ -630,6 +657,17 @@ void dotporduct_3x3_Q15(const int16_t *v1, const int16_t *v2, int16_t *dot){
 	dot[0] = x;
 }
 
+void dotporduct_4x4_Q15(const int16_t *v1, const int16_t *v2, int16_t *dot){
+	int32_t x;
+	x = ((int32_t)v1[0] * (int32_t)v2[0]) >> 2; // Q28
+	x += ((int32_t)v1[1] * (int32_t)v2[1]) >> 2; // Q28
+	x += ((int32_t)v1[2] * (int32_t)v2[2]) >> 2; // Q28
+	x += ((int32_t)v1[3] * (int32_t)v2[3]) >> 2; // Q28
+
+	x = Q13_SHIFT_ROUND(x); // Q28 - Q13 = Q15
+	x = CLAMP_INT32_TO_INT16(x);
+	dot[0] = x;
+}
 
 // function to start, stop the time the control need
 
@@ -757,7 +795,7 @@ void norm_3d_vector(int16_t *input, int16_t *norm_out){
 
 
 void NormalizeQuaternionQ15(const int16_t *q, int16_t *q_out) {
-	uint32_t minimal_mag_value = 2;
+	uint32_t minimal_mag_value = 10;
     int32_t qw = q[0];
     int32_t qx = q[1];
     int32_t qy = q[2];
@@ -771,13 +809,14 @@ void NormalizeQuaternionQ15(const int16_t *q, int16_t *q_out) {
         (int32_t)qz * qz;
 
     if (mag_sq < minimal_mag_value) {
-        q_out[0] = 32767;  // Default-Einheitsquat: w = 1.0
+        q_out[0] = Q15;  // Default-Einheitsquat: w = 1.0
         q_out[1] = q_out[2] = q_out[3] = 0;
         return;
     }
     if (mag_sq <= 0x7FFFFFFF) {
         // passt in int32_t → schneller Pfad
         uint32_t mag = sqrt_fast_uint((uint32_t)mag_sq);
+        if(mag == 0) return;
         // Q15: scale = (32767 << 15) / mag
         uint32_t scale_q15 = (32767UL << 15) / mag;
 
@@ -859,6 +898,36 @@ void Normalize4DvectorQ15(int16_t *in, int16_t *out){
     }
 }
 
+int16_t norm_of_4D_vector(const int16_t *q){
+    int16_t qw = q[0];
+    int16_t qx = q[1];
+    int16_t qy = q[2];
+    int16_t qz = q[3];
+
+    // Betrag berechnen: |q| = sqrt(w² + x² + y² + z²)
+    uint64_t mag_sq =
+        (int32_t)qw * qw +
+        (int32_t)qx * qx +
+        (int32_t)qy * qy +
+        (int32_t)qz * qz;
+
+    return CLAMP_INT32_TO_INT16((int32_t)sqrt_fast_uint((uint32_t)mag_sq));
+}
+
+int16_t norm_of_3D_vector(const int16_t *v){
+    int16_t qw = v[0];
+    int16_t qx = v[1];
+    int16_t qy = v[2];
+
+    // Betrag berechnen: |q| = sqrt(w² + x² + y² + z²)
+    uint32_t mag_sq =
+        (int32_t)qw * qw +
+        (int32_t)qx * qx +
+        (int32_t)qy * qy;
+
+    return CLAMP_INT32_TO_INT16((int32_t)sqrt_fast_uint((uint32_t)mag_sq));
+}
+
 void q_t_conj_function(int16_t *q){
 	q[1] = -q[1];
 	q[2] = -q[2];
@@ -876,6 +945,19 @@ void q_t_flipp(int16_t *q){
 	q[1] = -q[1];
 	q[2] = -q[2];
 	q[3] = -q[3];
+}
+
+void positve_quaternion_test_Q15(int16_t *q){
+	static int16_t q_old[4] = {Q15, 0, 0,0};
+	// unit quaternion: "naa 32 bit are enouth"
+	int32_t x = q15_mul(q[0],q_old[0]) + q15_mul(q[1],q_old[1]) + q15_mul(q[2],q_old[2]) + q15_mul(q[3],q_old[3]);
+
+	if(x < 0) q_t_flipp(q);
+
+	q_old[0] = q[0];
+	q_old[1] = q[1];
+	q_old[2] = q[2];
+	q_old[3] = q[3];
 }
 
 
@@ -928,10 +1010,12 @@ void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]) {
     int32_t q0q1 = q15_mul(q[0], q[1]);
     int32_t q2q3 = q15_mul(q[2], q[3]);
     int32_t roll_num = (q0q1 + q2q3) << 1;
+    roll_num = CLAMP_INT32_TO_INT16(roll_num);
 
     int32_t q1_sq = q15_mul(q[1], q[1]);
     int32_t q2_sq = q15_mul(q[2], q[2]);
     int32_t roll_den = ((1 << 15) - 2 * (q1_sq + q2_sq));
+    roll_den = CLAMP_INT32_TO_INT16(roll_den);
 
     euler[0] = q15_atan2((int16_t)(roll_num >> 0), (int16_t)(roll_den >> 0));
 
@@ -939,19 +1023,62 @@ void quat_to_euler_q15(const int16_t q[4], int16_t euler[3]) {
     int32_t q0q2 = q15_mul(q[0], q[2]);
     int32_t q3q1 = q15_mul(q[3], q[1]);
     int32_t pitch_arg = (q0q2 - q3q1) << 1;
+    pitch_arg = CLAMP_INT32_TO_INT16(pitch_arg);
 
-    euler[1] = q15_asin((int16_t)(pitch_arg >> 0));
+    euler[1] = (q15_asin((int16_t)(pitch_arg >> 0))) >> 1; // asin output scale from pi/2
 
     // Yaw = atan2(2*(q0*q3 + q1*q2), 1 - 2*(q2^2 + q3^2))
     int32_t q0q3 = q15_mul(q[0], q[3]);
     int32_t q1q2 = q15_mul(q[1], q[2]);
     int32_t yaw_num = (q0q3 + q1q2) << 1;
+    yaw_num = CLAMP_INT32_TO_INT16(yaw_num);
 
     int32_t q2_sq2 = q15_mul(q[2], q[2]);
     int32_t q3_sq = q15_mul(q[3], q[3]);
     int32_t yaw_den = ((1 << 15) - 2 * (q2_sq2 + q3_sq));
+    yaw_den = CLAMP_INT32_TO_INT16(yaw_den);
 
     euler[2] = q15_atan2((int16_t)(yaw_num >> 0), (int16_t)(yaw_den >> 0));
+}
+
+
+/* --- Q15 Hilfs-Makros --- */
+
+#ifndef HALF_ROUND
+#define HALF_ROUND(x)  (((x) >= 0) ? (((x)+1)>>1) : (((x)-1)>>1))
+#endif
+
+/* Vorhanden laut Vorgabe:
+int16_t sin_i(int16_t y);   // y: Q15, -pi..+pi
+int16_t cos_i(int16_t y);   // y: Q15, -pi..+pi
+*/
+
+void euler_to_quat_Q15(const int16_t pitch, const int16_t roll, const int16_t yaw, int16_t *q)
+{
+    /* Halbwinkel (Q15) */
+    const int16_t hr = roll >> 1;
+    const int16_t hp = pitch >> 2;
+    const int16_t hy = yaw >> 1;
+
+    /* sin/cos der Halbwinkel (Q15) */
+    const int16_t cr = cos_i(hr), sr = sin_i(hr);
+    const int16_t cp = cos_i(hp), sp = sin_i(hp);
+    const int16_t cy = cos_i(hy), sy = sin_i(hy);
+
+    /* Produkte (alle Q15) */
+    const int16_t crcp = q15_mul(cr, cp);
+    const int16_t srsp = q15_mul(sr, sp);
+    const int16_t crcpsy = q15_mul(crcp, sy);
+    const int16_t crcpcy = q15_mul(crcp, cy);
+    const int16_t srspcy = q15_mul(srsp, cy);
+    const int16_t srspsy = q15_mul(srsp, sy);
+
+
+    /* Quaternion (w,x,y,z) = (q0,q1,q2,q3), ZYX-Konvention (yaw-pitch-roll) */
+    q[0] = CLAMP_INT32_TO_INT16(((int32_t)crcpcy + srspsy));                  /* w */
+    q[1] = (int16_t)(q15_mul(sr, q15_mul(cp, cy)) - q15_mul(cr, q15_mul(sp, sy))); /* x */
+    q[2] = (int16_t)(q15_mul(cr, q15_mul(sp, cy)) + q15_mul(sr, q15_mul(cp, sy))); /* y */
+    q[3] = CLAMP_INT32_TO_INT16((int32_t)crcpsy - srspcy);                  /* z */
 }
 
 void vector2quaternion_q15(const int16_t *v, int16_t *q){
@@ -1008,6 +1135,22 @@ void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out
 	ln_out[0] = q15_mul_2(v[0],theta_q15);
 	ln_out[1] = q15_mul_2(v[1],theta_q15);
 	ln_out[2] = q15_mul_2(v[2],theta_q15);
+}
+
+void exponential_mapping_error_Q15(const int16_t *e, int16_t *q){
+	int32_t norm_e;
+	int32_t sin;
+
+	norm_e = CLAMP_INT32_TO_INT16(norm_of_4D_vector(e));
+
+	if(norm_e < 10) return;
+
+	q[0] = cos_Q15(norm_e);
+	sin = CLAMP_INT32_TO_INT16(((sin_Q15(norm_e) * Q15) / norm_e));
+	q[1] = q15_mul(e[0],sin);
+	q[2] = q15_mul(e[1],sin);
+	q[3] = q15_mul(e[2],sin);
+
 }
 
 void minimal_rotation(const int16_t *a, const int16_t *b, int16_t *q_out){

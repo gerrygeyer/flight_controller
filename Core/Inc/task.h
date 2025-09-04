@@ -16,8 +16,8 @@
 
 #define INIT_WAIT_TIME	(ATTITUDE_FREQUENCY*3) // Wait 3 sec
 
-#define TIME_PERIOD_SHORT 	500	// 5s
-#define TIME_PERIOD 		1000	// 10s
+#define TIME_PERIOD_SHORT 	2500	// 5s
+#define TIME_PERIOD 		5000	// 10s
 #define TIME_1				0
 #define TIME_2				1
 #define TIME_3				2

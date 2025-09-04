@@ -20,6 +20,7 @@ uint8_t I2C_buf[6];  // statt DMA
 int16_t global_mx, global_my, global_mz, global_mx_buffer,global_my_buffer, global_mz_buffer;
 volatile bool lis3mdl_write_data;
 xyz_16t debug_mag;
+bool mag_init = 0;
 
 /**
  * @brief		function to write register in polling mode
@@ -62,18 +63,18 @@ void LIS3MDL_Init(void)
     HAL_Delay(10);
 
     // I2C Scan (optional)
-    for (uint8_t address = 0x08; address <= 0x77; address++)
-    {
-        if (HAL_I2C_IsDeviceReady(&hi2c1, address << 1, 2, 10) == HAL_OK)
-        {
-            HAL_Delay(10);
-        }
-    }
-
-    if (HAL_I2C_IsDeviceReady(&hi2c1, LIS3MDL_I2C_ADDR, 3, HAL_MAX_DELAY) != HAL_OK)
-    {
-        HAL_Delay(1);
-    }
+//    for (uint8_t address = 0x08; address <= 0x77; address++)
+//    {
+//        if (HAL_I2C_IsDeviceReady(&hi2c1, address << 1, 2, 10) == HAL_OK)
+//        {
+//            HAL_Delay(10);
+//        }
+//    }
+//
+//    if (HAL_I2C_IsDeviceReady(&hi2c1, LIS3MDL_I2C_ADDR, 3, HAL_MAX_DELAY) != HAL_OK)
+//    {
+//        HAL_Delay(1);
+//    }
 
     // Konfiguration
     LIS3MDL_WriteReg(0x20, 0b01111100); // CTRL_REG1: 80Hz, UHP
@@ -88,6 +89,7 @@ void LIS3MDL_Init(void)
     uint8_t dummy[6];
     HAL_I2C_Mem_Read(&hi2c1, LIS3MDL_I2C_ADDR,
                      0x28 | 0x80, I2C_MEMADD_SIZE_8BIT, dummy, 6, HAL_MAX_DELAY);
+    mag_init = 1;
 }
 
 /**
@@ -114,6 +116,31 @@ void LIS3MDL_EXTI_Callback(void)
                             0x28 | 0x80, I2C_MEMADD_SIZE_8BIT,
                             I2C_buf, 6);
     }
+}
+
+static xyz_16t hard_iron_measurement(int16_t mx, int16_t my, int16_t mz){
+	xyz_16t mean_val, zero_output = {0};
+
+	static bool finish_flag = 0;
+	static uint8_t counter = 0;
+	static xyz_32t store_data = {0};
+
+	const durations = 100;
+
+	if(counter < durations){
+		store_data.x += mx;
+		store_data.y += my;
+		store_data.z += mz;
+	}else{
+		finish_flag = 1;
+		mean_val.x = CLAMP_INT32_TO_INT16(store_data.x/durations);
+		mean_val.y = CLAMP_INT32_TO_INT16(store_data.y/durations);
+		mean_val.z = CLAMP_INT32_TO_INT16(store_data.z/durations);
+	}
+	counter++;
+
+	if (finish_flag) return mean_val;
+	return zero_output;
 }
 
 /**
@@ -149,6 +176,8 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 
 
         mag_ready();  // Signals that magnetometer data is ready for use (defined in sensor_fusion.c)
+
+
     }
 }
 
@@ -228,11 +257,91 @@ void read_data_mag(sensor_fusion *pHandle)
  * @note  Calculated offline in MATLAB and scaled to Q15
  * @see   softiron_apply_q15()
  */
+
+#if SYSTEM == DRONE
+
+// Hard-iron offset vector (scaled to Q15-compatible range)
+const int16_t hardiron_q15[3] = { -573, -2171, -4990};
+
 const int32_t softiron_q15[3][3] = {
     {  32768,   4378,   1525 },
     {   4378,  29344,    623 },
     {   1525,    623,  28004 }
 };
+
+//// === Hard-Iron Offset ===
+//const int16_t hardiron_q15[3] = { -1122, 657, -6604 };
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  13008,  -1379,   1523 },
+//    {  -1379,  32768, -14661 },
+//    {   1523, -14661,  18440 }
+//};
+//// === Hard-Iron Offset 2. only half ball ===
+//const int16_t hardiron_q15[3] = { -2390, -1740, -6546 };
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  14829,   1864,    846 },
+//    {   1864,  14879,   1902 },
+//    {    846,   1902,  32768 }
+//};
+
+//// === Hard-Iron Offset Only important positions===
+//const int16_t hardiron_q15[3] = { 22, -1283, -5855 };
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  31220,    855,  -6114 },
+//    {    855,  32286,  -2814 },
+//    {  -6114,  -2814,  32768 }
+//};
+//// === Hard-Iron Offset 3.0 ===
+//const int16_t hardiron_q15[3] = { -1130, -779, -6371};
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  27533,    452,    822 },
+//    {    452,  17690,  -4410 },
+//    {    822,  -4410,  32768 }
+//};
+
+#endif
+
+#if SYSTEM == IMU
+//// === Hard-Iron Offset ===
+//const int16_t hardiron_q15[3] = { -1859, -2111, -3630 };
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  30071,    374,    988 },
+//    {    374,  22206,   -890 },
+//    {    988,   -890,  32768 }
+//};
+// === Hard-Iron Offset 2. only half ball ===
+const int16_t hardiron_q15[3] = { -2390, -1740, -6546 };
+
+// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+const int32_t softiron_q15[3][3] = {
+    {  14829,   1864,    846 },
+    {   1864,  14879,   1902 },
+    {    846,   1902,  32768 }
+};
+
+//// === Hard-Iron Offset 3.0 ===
+//const int16_t hardiron_q15[3] = { -1130, -779, -6371};
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  27533,    452,    822 },
+//    {    452,  17690,  -4410 },
+//    {    822,  -4410,  32768 }
+//};
+
+
+
+#endif
 
 //const int32_t softiron_q15[3][3] = {
 //    {  30588,   3674,  -2487 },
@@ -248,8 +357,7 @@ const int32_t softiron_q15[3][3] = {
 //    0.2063   -0.7926   -8.4992;
 
 
-// Hard-iron offset vector (scaled to Q15-compatible range)
-const int16_t hardiron_q15[3] = { -573, -2171, -4990};
+
 //const int32_t hardiron_q15[3] = {
 //		206, -792, -8499
 //};
