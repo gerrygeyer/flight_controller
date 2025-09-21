@@ -10,11 +10,21 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <math.h>
 
+#define IMU_FREQUENCY		1000 // Hz
 #define ATTITUDE_FREQUENCY	500 // Hz
 #define POSITION_FREQUENCY	100 // Hz
+#define OPTICAL_FLOW_FREQ	50 // Hz
 
-#define POS_FREQ_DIV		5 // 500 / 100
+
+#define POS_FREQ_DIV		(5-1) // 500 / 100
+// #### POSITION CONTROL SETTINGS ####
+#define POS_ACC_LP_FC			20.0f
+#define POS_SPEED_HIGHT_LP_FC	5.0f
+#define POS_SPEED_XY_LP_FC		2.0f
+
+
 
 #define OK			0
 #define NOT_OK		1
@@ -41,11 +51,17 @@
 #define SF_MADGWICK			0
 #define SF_COMPLEMENTARY	1
 #define SF_EKF				2
+#define SF_AXIS_ALIGN		3
+#define LOG_DATA_ONLY		100
 
 #define ACC_ON				1
 #define ACC_OFF				0
 #define MAG_ON				1
 #define MAG_OFF				0
+
+#define LOG_DATA			1
+#define SOLVE_COST_FCT		2
+
 
 #define SET_IMU_OFFSET		OK
 #define SYSTEM_FREQUENCY	100 // Hz
@@ -53,6 +69,8 @@
 
 #define MAX_SPEED_MOTOR_RPM 8192 // its Q13
 #define MAX_SPEED_MOTOR_RAD 1024 // its Q10 (its a little bit more than Q9)
+
+#define MAX_HIGHT			200	// cm
 
 #define DRONE_PARAM_K		0.000021f
 #define DRONE_PARAM_L		0.16f
@@ -64,6 +82,26 @@
 #define DRONE_PARAM_KL_E6	3.36f // = 0,00000336
 #define DRONE_PARAM_B_E6	0.1898f
 #define E6					1000000
+
+#define DRONE_WEIGHT_KG		1.282f //
+
+#define COST_FCT_ITERATIONS	20000
+#define COST_FCT_TOLEARANCE	1e-18f
+
+// determined experimentally
+#define IMU_GYRO_SCAL_X		1.1961f
+#define IMU_GYRO_SCAL_Y		1.1777f
+#define IMU_GYRO_SCAL_Z		1.2169f
+
+// Optical flow settings
+
+#define OPT_FLOW_SENSOR_DIST	50 // distance from sensor to rotation center
+#define OPT_FLOW_CORR_FACTOR	2.094f
+
+// #### WAIT CONSTANTS ###
+
+#define YAW_OFFSET_TIME		ATTITUDE_FREQUENCY // -> 1 sec
+
 
 
 #define MOTOR_STOPP 0x00
@@ -192,6 +230,8 @@ typedef struct{
 	xyz_16t mag_t;	/**< mag_xyz in Q15 representation */
 	xyz_16t gyro_t;	/**< gyro_xyz in Q15 representation */
 
+	bool mag_updated;
+
 	xyz_16t gyro_drift_est;
 	xyz_16t acc_drift_est;
 
@@ -277,7 +317,28 @@ typedef struct
 } optical_flow_data;
 
 
+typedef struct __attribute__((packed)) {
+    uint32_t system_time_ms;
+    uint32_t distance_mm;
+    uint8_t  distance_strength;
+    uint8_t  distance_precision;
+    uint8_t  distance_status;
+    uint8_t  reserved1;
+    int16_t  flow_vel_x;
+    int16_t  flow_vel_y;
+    uint8_t  flow_quality;
+    uint8_t  flow_status;
+    uint16_t reserved2;
+} mtf01_payload_t;
 
+typedef struct {
+	int16_t x1;
+	int16_t x2;
+	int16_t x3;
+	int16_t x4;
+	int16_t x5;
+	int16_t x6;
+}lqr_state;
 
 
 

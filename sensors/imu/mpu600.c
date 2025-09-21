@@ -13,6 +13,8 @@
 #include <sensor_fusion.h>
 #include <stdlib.h>
 #include <string.h>
+#include <encoder.h>
+#include <parameter.h>
 
 #define MPU6000_READ_LEN 14  // accel+gyro+temp
 
@@ -24,6 +26,8 @@ volatile bool mpu6000_dma_ready = false;
 int16_xyz accel, gyro;
 volatile bool init_flag_mpu;
 OFFSET_ACC_GYRO imu_offset;
+xyz_16t gyro_scale_K_Q14;
+
 
 volatile MPU6000_State_t mpu_state = MPU6000_IDLE;
 uint8_t mpu_reg_addr;
@@ -49,7 +53,7 @@ int16_xyz gyro_raw;
 
 static HAL_StatusTypeDef MPU6000_Read_command_IT(uint8_t reg, uint8_t* data, uint16_t len);
 static uint8_t calculate_offset_values(OFFSET_ACC_GYRO *pHandle);
-static OFFSET_ACC_GYRO MPU6000_ReadAccelGyro_offset(void);
+
 
 // triggert by interrupt in stm32h7xx_it.c
 void MPU6000_EXTI_Callback(void)
@@ -213,17 +217,26 @@ void MPU6000_ReadAccelGyro_start_IT(void){
 }
 
 void MPU6000_Get_data_IT(sensor_fusion * pHandler_sf){
+	int16_t x;
+	__disable_irq();
 	accel.x  = pHandler_sf->acc_t.x = (int16_t)(imu_data[0] << 8 | imu_data[1]) - imu_offset.acc.x;
 	accel.y  = pHandler_sf->acc_t.y = (int16_t)(imu_data[2] << 8 | imu_data[3]) - imu_offset.acc.y;
 	accel.z  = pHandler_sf->acc_t.z = (int16_t)(imu_data[4] << 8 | imu_data[5]) - imu_offset.acc.z;
 
-	gyro.x  = pHandler_sf->gyro_t.x = (int16_t)(imu_data[8] << 8 | imu_data[9]) - imu_offset.gyro.x;
-	gyro.y	= pHandler_sf->gyro_t.y = (int16_t)(imu_data[10] << 8 | imu_data[11]) - imu_offset.gyro.y;
-	gyro.z	= pHandler_sf->gyro_t.z = (int16_t)(imu_data[12] << 8 | imu_data[13]) - imu_offset.gyro.z;
+//	gyro.x  = pHandler_sf->gyro_t.x = (int16_t)(imu_data[8] << 8 | imu_data[9]) - imu_offset.gyro.x;
+	x = (int16_t)(imu_data[8] << 8 | imu_data[9]) - imu_offset.gyro.x;
+	gyro.x  = pHandler_sf->gyro_t.x = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(((int32_t)x * (int32_t)gyro_scale_K_Q14.x)));
+//	gyro.y	= pHandler_sf->gyro_t.y = (int16_t)(imu_data[10] << 8 | imu_data[11]) - imu_offset.gyro.y;
+	x = (int16_t)(imu_data[10] << 8 | imu_data[11]) - imu_offset.gyro.y;
+	gyro.y  = pHandler_sf->gyro_t.y = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(((int32_t)x * (int32_t)gyro_scale_K_Q14.y)));
+//	gyro.z	= pHandler_sf->gyro_t.z = (int16_t)(imu_data[12] << 8 | imu_data[13]) - imu_offset.gyro.z;
+	x = (int16_t)(imu_data[12] << 8 | imu_data[13]) - imu_offset.gyro.z;
+	gyro.z  = pHandler_sf->gyro_t.z = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(((int32_t)x * (int32_t)gyro_scale_K_Q14.z)));
 
 	gyro_raw.x = (int16_t)(imu_data[8] << 8 | imu_data[9]);
 	gyro_raw.y = (int16_t)(imu_data[10] << 8 | imu_data[11]);
 	gyro_raw.z = (int16_t)(imu_data[12] << 8 | imu_data[13]);
+	__enable_irq();
 }
 
 
@@ -243,6 +256,10 @@ HAL_StatusTypeDef MPU6000_Init(void) {
 	read_pending = false;
 	mpu_i2c_busy = 0;
 	stuck_counter = 0;
+
+	gyro_scale_K_Q14.x = CLAMP_INT32_TO_INT16((int32_t)(IMU_GYRO_SCAL_X * (float)Q14));
+	gyro_scale_K_Q14.y = CLAMP_INT32_TO_INT16((int32_t)(IMU_GYRO_SCAL_Y * (float)Q14));
+	gyro_scale_K_Q14.z = CLAMP_INT32_TO_INT16((int32_t)(IMU_GYRO_SCAL_Z * (float)Q14));
 
 	HAL_GPIO_WritePin(IMU_ADDR_PORT, IMU_ADDR_PIN, RESET);
 	HAL_Delay(100);
@@ -323,7 +340,7 @@ if(init_flag_mpu){
 		result_values_gyro.y = imu_data.gyro.y - pHandle->gyro.y;
 		result_values_gyro.z = imu_data.gyro.z - pHandle->gyro.z;
 
-		if((abs(result_values_gyro.x) + abs(result_values_gyro.y) + abs(result_values_gyro.z)) > 10){
+		if((abs(result_values_gyro.x) + abs(result_values_gyro.y) + abs(result_values_gyro.z)) > 5){
 			imu_data_counter = 0;
 			fail_counter++;
 
@@ -337,8 +354,10 @@ if(init_flag_mpu){
 			fail_counter = 0;
 			data_ready = 1;
 			offset_calc_sucess = 1;
+			if(TEST_STATION_ENCODER == ON) set_encoder_to_zero();
 		}
 		if(fail_counter > 200){
+			if(TEST_STATION_ENCODER == ON) set_encoder_to_zero();
 			// error
 			return 1;
 		}
@@ -358,6 +377,7 @@ uint8_t MPU6000_ReadID(void) {
 
 
 // Ohne DMA (funktioniert
+
 HAL_StatusTypeDef MPU6000_ReadAccelGyro(sensor_fusion * pHandler_sf) {
     uint8_t data[14];
 
@@ -370,14 +390,15 @@ HAL_StatusTypeDef MPU6000_ReadAccelGyro(sensor_fusion * pHandler_sf) {
     accel.y  = pHandler_sf->acc_t.y = ((int16_t)(data[2] << 8 | data[3]) - imu_offset.acc.y);
     accel.z  = pHandler_sf->acc_t.z = ((int16_t)(data[4] << 8 | data[5]) - imu_offset.acc.z);
 
-    gyro.x  = pHandler_sf->gyro_t.x = ((int16_t)(data[8] << 8 | data[9]) - imu_offset.gyro.x);
+    gyro.x  = pHandler_sf->gyro_t.x = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND((((int32_t)(data[8] << 8 | data[9]) - imu_offset.gyro.x)) * gyro_scale_K_Q14.x));
     gyro.y	= pHandler_sf->gyro_t.y = ((int16_t)(data[10] << 8 | data[11]) - imu_offset.gyro.y);
     gyro.z	= pHandler_sf->gyro_t.z = ((int16_t)(data[12] << 8 | data[13]) - imu_offset.gyro.z);
+
 
     return HAL_OK;
 }
 
-static OFFSET_ACC_GYRO MPU6000_ReadAccelGyro_offset(void){
+OFFSET_ACC_GYRO MPU6000_ReadAccelGyro_offset(void){
 	OFFSET_ACC_GYRO Output;
     uint8_t data[14];
     MPU6000_Read(MPU6000_REG_ACCEL_XOUT_H, data, 14);

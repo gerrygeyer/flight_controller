@@ -319,15 +319,15 @@ const int32_t softiron_q15[3][3] = {
 //    {    374,  22206,   -890 },
 //    {    988,   -890,  32768 }
 //};
-// === Hard-Iron Offset 2. only half ball ===
-const int16_t hardiron_q15[3] = { -2390, -1740, -6546 };
-
-// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
-const int32_t softiron_q15[3][3] = {
-    {  14829,   1864,    846 },
-    {   1864,  14879,   1902 },
-    {    846,   1902,  32768 }
-};
+//// === Hard-Iron Offset 2. only half ball ===
+//const int16_t hardiron_q15[3] = { -2390, -1740, -6546 };
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  14829,   1864,    846 },
+//    {   1864,  14879,   1902 },
+//    {    846,   1902,  32768 }
+//};
 
 //// === Hard-Iron Offset 3.0 ===
 //const int16_t hardiron_q15[3] = { -1130, -779, -6371};
@@ -339,6 +339,15 @@ const int32_t softiron_q15[3][3] = {
 //    {    822,  -4410,  32768 }
 //};
 
+// === Hard-Iron Offset ===
+const int16_t hardiron_q15[3] = { 22, -1284, -5855 };
+
+// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+const int32_t softiron_q15[3][3] = {
+    {  31220,    855,  -6114 },
+    {    855,  32286,  -2814 },
+    {  -6114,  -2814,  32768 }
+};
 
 
 #endif

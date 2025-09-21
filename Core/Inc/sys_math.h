@@ -35,22 +35,23 @@
 
 
 
-#define Q1					2
-#define Q4					16
-#define Q10					1024
-#define Q11					2048
-#define Q12					4096
-#define Q13					8192
-#define Q14					16384
-#define Q15					32768
-#define Q16					65536
-#define Q18					262144
-#define Q19					524288
-#define Q20					1048576
-#define Q21					2097152
-#define Q22					4194304
-#define Q29					536870912
-#define Q30					1073741824
+#define Q1					((1 << 1)-1)
+#define Q4					((1 << 4)-1)
+#define Q10					((1 << 10)-1)
+#define Q11					((1 << 11)-1)
+#define Q12					((1 << 12)-1)
+#define Q13					((1 << 13)-1)
+#define Q14					((1 << 14)-1)
+#define Q15					((1 << 15)-1)
+#define Q16					((1 << 16)-1)
+#define Q18					((1 << 18)-1)
+#define Q19					((1 << 19)-1)
+#define Q20					((1 << 20)-1)
+#define Q21					((1 << 21)-1)
+#define Q22					((1 << 22)-1)
+#define Q25					((1 << 25)-1)
+#define Q29					((1 << 29)-1)
+#define Q30					((1 << 30)-1)
 
 
 /**
@@ -96,8 +97,12 @@
 #define Q13_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 12) : -(1 << 12))) >> 13)
 #define Q10_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 9) : -(1 << 9))) >> 10)
 #define Q8_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 7) : -(1 << 7))) >> 8)
+#define Q7_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 6) : -(1 << 6))) >> 7)
+#define Q5_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 4) : -(1 << 4))) >> 5)
 #define Q1_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 0) : -(1 << 0))) >> 1)
 
+
+int16_t q15_mul(int16_t a, int16_t b) ;
 
 /**
  * @brief       Converts motor speed from RPM to angular velocity in rad/s (Q15 scaled).
@@ -369,9 +374,11 @@ void q_t_flipp(int16_t *q);
 /**
  * @brief		Test for positive direction
  *
+ * @note		(DONT USE THIS; COPY IT TO LOCAL; because of static value)
+ *
  * @see			q_t_conj_function_in_out_q15
  */
-void positve_quaternion_test_Q15(int16_t *q);
+void positive_quaternion_test_Q15(int16_t *q);
 
 /**
  * @brief       Normalizes a 3D vector to unit length in Q15 format.

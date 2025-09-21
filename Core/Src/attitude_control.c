@@ -34,7 +34,7 @@ float debug_u_f1, debug_u_f2, debug_u_f3,debug_u_f4;
  * @note        This function is `static inline` for performance and can be used in tight control loops.
  *              Result is clamped implicitly by casting to int16_t.
  */
-static inline int16_t q15_mul(int16_t a, int16_t b);
+//static inline int16_t q15_mul(int16_t a, int16_t b);
 
 
 /**
@@ -117,14 +117,23 @@ void init_attitude_control(void){
 
 //	drone_parameter.Jz_y_div_x = drone_parameter.Jzz - drone_parameter.Jyy
 
-	gain.P1.pitch = 5.0f;
-	gain.P1.roll = 5.0f;
-	gain.P1.yaw = 0.01f;
+//	gain.P1.pitch = 4.2f;
+//	gain.P1.roll = 4.2f;
+//	gain.P1.yaw = 0.15f;
+//
+//
+//	gain.P2.pitch = 0.32;
+//	gain.P2.roll = 0.32;
+//	gain.P2.yaw = 0.008;
+
+	gain.P1.pitch = 7.4f;
+	gain.P1.roll = 7.4f;
+	gain.P1.yaw = 0.264f;
 
 
-	gain.P2.pitch = 1.0;
-	gain.P2.roll = 1.0;
-	gain.P2.yaw = 0.05;
+	gain.P2.pitch = 0.95;
+	gain.P2.roll = 0.95;
+	gain.P2.yaw = 0.016;
 
 
 }
@@ -433,7 +442,6 @@ differential_with_scaling_q15(q, q_last_value,(ATTITUDE_FREQUENCY),5, diff_q); /
 
 multiplicateQuaternionQ15(q_inv,diff_q,w);
 
-
 feedback_linearisation(u_lqr, w_gyro_t, &drone_parameter, tau);
 
 //if(q_count++ > 10){
@@ -621,9 +629,6 @@ void get_motor_speed_from_u(const int32_t *u, int16_t *w_rpm, motor_t *pHandle_m
 
 
 
-static inline int16_t q15_mul(int16_t a, int16_t b) {
-    return CLAMP_INT32_TO_INT16(((int32_t)a * b + (1 << 14)) >> 15); // mit Rundung
-}
 
 
 void set_init_yaw_position(const int16_t *q, int16_t *q_yaw_corr, int16_t *q_axis_corr){
@@ -693,6 +698,7 @@ static void iir_filter_gyro(const int16_t *gyro_raw, int16_t *gyro_filter){
 
 }
 
+xyz_16t debug_control_out;
 void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q_ref, const int16_t *w_gyro_t, int16_t *tau){
 	int16_t q_reff[4], q_con[4], q_err[4], gyro_filter[3], gyro_small[3];
 	int32_t out[3];
@@ -708,9 +714,9 @@ void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q
 	gyro_filter[1] = q15_mul(w_gyro_t[1], GRAD2RAD_GYRO_MAX_Q15);
 	gyro_filter[2] = q15_mul(w_gyro_t[2], GRAD2RAD_GYRO_MAX_Q15);
 
-	gyro_small[0]  = (w_gyro_t[0] >> 3);
-	gyro_small[1]  = (w_gyro_t[1] >> 3);
-	gyro_small[2]  = (w_gyro_t[2] >> 3);
+	gyro_small[0]  = (w_gyro_t[0] >> 0);
+	gyro_small[1]  = (w_gyro_t[1] >> 0);
+	gyro_small[2]  = (w_gyro_t[2] >> 0);
 
 
 	debug_gyro_x = gyro_filter[0];
@@ -721,9 +727,13 @@ void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q
 	out[1] = -q15_mul(q_err[2],(int16_t)(gain.P1.roll * (float)Q10));
 	out[2] = -q15_mul(q_err[3],(int16_t)(gain.P1.yaw * (float)Q10));
 
-	out[0] -= q15_mul(gyro_small[0],CLAMP_INT32_TO_INT16((int32_t)(gain.P2.pitch * (float)Q15)));
-	out[1] -= q15_mul(gyro_small[1],CLAMP_INT32_TO_INT16((int32_t)(gain.P2.roll * (float)Q15)));
-	out[2] -= q15_mul(gyro_small[2],CLAMP_INT32_TO_INT16((int32_t)(gain.P2.yaw * (float)Q15)));
+	debug_control_out.x = out[0];
+	debug_control_out.y = out[1];
+	debug_control_out.z = out[2];
+
+	out[0] = CLAMP_INT32_TO_INT16(out[0] - q15_mul(gyro_small[0],(int32_t)(gain.P2.pitch * (float)Q15)));
+	out[1] = CLAMP_INT32_TO_INT16(out[1] - q15_mul(gyro_small[1],(int32_t)(gain.P2.roll * (float)Q15)));
+	out[2] = CLAMP_INT32_TO_INT16(out[2] - q15_mul(gyro_small[2],(int32_t)(gain.P2.yaw * (float)Q15)));
 
 	tau[0] = out[0];
 	tau[1] = out[1];
@@ -733,10 +743,12 @@ void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q
 
 void filter_SLERP_EMA_quaternion_Q15(const int16_t *q_in, int16_t *q_out){
 
-	const int16_t a_div2 = 3641; // fc = 5 Hz, Ts = 1/500, a_div2 = a/2
+	const int16_t a_div2 = 2814; // fc = 15 Hz, Ts = 1/500, a_div2 = a/2 ... \alpha = 1 - e^{-2\pi f_c T_s}
 	static int16_t q_last[4] = {0};
 	int16_t dot, q[4], q_last_con[4], q_err[4], e[3], delta_q[4];
+	bool sign_q;
 	copy_q(q_in, q);
+	if(q_in[0] < 0) sign_q = 1;
 
 	dotporduct_4x4_Q15(q_last,q, &dot);
 	if(dot < 0) neg_q_Q15(q);
@@ -753,6 +765,12 @@ void filter_SLERP_EMA_quaternion_Q15(const int16_t *q_in, int16_t *q_out){
 	NormalizeQuaternionQ15(q_out, q_out);
 
 	copy_q(q_out, q_last);
+
+	if((q_out[0] < 0) && sign_q){
+		// you're correct
+	}else{
+		neg_q_Q15(q_out);
+	}
 }
 
 

@@ -30,6 +30,10 @@
 #include <stdio.h>
 #include <settings.h>
 
+#include <solve_cost_function.h>
+#include <sys_math.h>
+#include <parameter.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,6 +44,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 bool error_handle_flag = false;
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -73,6 +78,7 @@ SD_HandleTypeDef hsd1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
 
@@ -97,19 +103,22 @@ static void MX_I2C4_Init(void);
 static void MX_LPUART1_UART_Init(void);
 static void MX_UART7_Init(void);
 static void MX_UART8_Init(void);
-static void MX_SDMMC1_SD_Init(void); // KOMMENTIEREN
+static void MX_SDMMC1_SD_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void DWT_Init(void)
-{
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk; // Trace aktivieren
-    DWT->CYCCNT = 0;                                // Reset
-    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;            // Counter einschalten
-}
+//void DWT_Init(void)
+//{
+//    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk; // Trace aktivieren
+//    DWT->CYCCNT = 0;                                // Reset
+//    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;            // Counter einschalten
+//}
+
+
 /* USER CODE END 0 */
 
 /**
@@ -158,19 +167,18 @@ int main(void)
   MX_LPUART1_UART_Init();
   MX_UART7_Init();
   MX_UART8_Init();
-//  MX_SDMMC1_SD_Init(); // KOMMENTIEREMN
-//  MX_FATFS_Init();	// KOMMENTIEREN
+  MX_SDMMC1_SD_Init();
+  MX_FATFS_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
 
 
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET); // LED AN
 //  __disable_irq();
-if(LOG_DATA){
+if(LOOP_EXERCISE == LOG_DATA){
   bool ok = Log_Init(); // KOMMENTIEREN
 }
-
-
 //	  HAL_UART_Init(&huart1);
 	if (HAL_I2C_Init(&hi2c1) != HAL_OK){
 		Error_Handler();
@@ -186,26 +194,84 @@ if(LOG_DATA){
 	if (HAL_I2C_Init(&hi2c4) != HAL_OK){
 		Error_Handler();
 	}
-
-	if (HAL_UART_Init(&huart1) != HAL_OK){
-		Error_Handler();
+if(TEST_STATION_ENCODER == ON){
+	if(HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL) != HAL_OK){
+		uint8_t test = 0;
 	}
-
-
-
+}
+//
+//HAL_Delay(500);
+//
+//	 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // LED AUS
+//	 HAL_Delay(500);
+//	 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET); // LED AN
 
   task_init();
-
-//  __enable_irq();
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // LED AN
-
-
   if(HAL_TIMEx_PWMN_Start_IT(&htim1, TIM_CHANNEL_1) != HAL_OK){
 	  Error_Handler();
   }
 
+//	if (HAL_UART_Init(&huart1) != HAL_OK){
+//		Error_Handler();
+//	}
+
+//  __enable_irq();
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // LED AUS
 
 
+
+
+
+
+
+  void compute_lqr_example(void)
+  {
+//      double Ts = 0.002; // 500 Hz
+//
+//      // Deine MATLAB-Gewichte:
+////      float Qdiag[6] = {9.86f, 9.0f, 0.5f, 200.0f, 100.0f, 30.0f};
+//
+//      float Ad[36], Bd[18], Qd[36], Rd[9], K[18], P[36];
+//
+//      build_Ad_Bd(Ts, Ad, Bd);
+//      build_Qd_Rd_scaled(Ts, Qdiag, Rdiag, Qd, Rd, true);
+//
+//      start_time_measurement();
+//      // bool ok = lqr_dare_iter(Ad,Bd,Qd,Rd, K,P, 1e-11f, 8000);
+//      bool ok = lqr_dare_iter2x2(Ad,Bd,Qd,Rd, K,P, 1e-18f, 20000);
+//      stopp_time_measurement();
+//
+//      if(!ok){ /* Fehlerbehandlung (Gewichte prüfen etc.) */ }
+//
+//      // ---- Residuum-Check pro Achse ----
+//      double err_x = lqr_residuum_axis(Ts,
+//                                       Qd[0*6+0], Qd[3*6+3], Rd[0*3+0],
+//                                       P[0*6+0], P[0*6+3], P[3*6+3]);
+//
+//      double err_y = lqr_residuum_axis(Ts,
+//                                       Qd[1*6+1], Qd[4*6+4], Rd[1*3+1],
+//                                       P[1*6+1], P[1*6+4], P[4*6+4]);
+//
+//      double err_z = lqr_residuum_axis(Ts,
+//                                       Qd[2*6+2], Qd[5*6+5], Rd[2*3+2],
+//                                       P[2*6+2], P[2*6+5], P[5*6+5]);
+//
+//      // jetzt hast du err_x, err_y, err_z als Kontrollwerte
+//      // z.B. zum Loggen oder Abbruch, falls zu groß
+//      // Erwartung: ~1e-12 bis 1e-15
+//
+//      float rho_max, rho_axis[3], lam1[3], lam2[3];
+//      bool stable = lqr_stability_check_2x2(Ad, K, &rho_max, rho_axis, lam1, lam2);
+//
+//      // optional: Schwellwert/Marge prüfen
+//       float margin = 1.0f - rho_max;   // >0 -> stabil, je größer desto robuster
+//
+//      // ---- Control Law ----
+//      // u = -K x  (K ist 3x6 zeilenweise)
+//      uint8_t test = 1;
+  }
+
+//compute_lqr_example();
 //  uint8_t send_data[3];
 //
 //  send_data[0] = 0b00100100;
@@ -217,10 +283,21 @@ if(LOG_DATA){
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  if(LOG_DATA){
-	  log_data_if_ready();
-	    Log_ProcessBuffered();   // schreibt Puffer zur SD-Karte
-}
+//	  uint32_t test = TIM4->CNT;
+	  switch(LOOP_EXERCISE){
+	  case (LOG_DATA):
+		log_data_if_ready();
+		Log_ProcessBuffered();   // schreibt Puffer zur SD-Karte
+		break;
+	  case (SOLVE_COST_FCT):
+		run_cost_function();
+		break;
+	  default:
+		  // do nothing
+		  break;
+
+	  }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -869,7 +946,7 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = (24-1);
+  htim1.Init.Prescaler = (48-1);
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim1.Init.Period = (10000-1);
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -977,6 +1054,55 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 4096-1;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim4, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -1040,7 +1166,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOB, LIDAR3_xShunt_out_Pin|MAG_CS_GPIO_OUT_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, IMU_RESET_Pin|IMU_ADDR_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14|IMU_ADDR_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : Diode_D2_Pin Debug_Pin LIDAR1_xShunt_out_Pin */
   GPIO_InitStruct.Pin = Diode_D2_Pin|Debug_Pin|LIDAR1_xShunt_out_Pin;
@@ -1069,8 +1195,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : IMU_RESET_Pin IMU_ADDR_Pin */
-  GPIO_InitStruct.Pin = IMU_RESET_Pin|IMU_ADDR_Pin;
+  /*Configure GPIO pins : PE14 IMU_ADDR_Pin */
+  GPIO_InitStruct.Pin = GPIO_PIN_14|IMU_ADDR_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

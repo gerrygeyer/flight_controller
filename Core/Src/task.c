@@ -17,10 +17,22 @@
 #include <sensor_fusion.h>
 #include <Distance/distance_sensor.h>
 #include <log_data.h>
+#include <position_control.h>
+#include <Optical_flow/uart_ring.h>
+//#include <Optical_flow/mtf02.h>
+#include "Optical_flow/mtf02_ring_buffer.h"
+#include <stdbool.h>
+#include <encoder.h>
 
 uint8_t system_state;
 motor_t motor;
 at_control_f attitude_control_signals;
+mtf01_payload_t optical_flow;
+bool init_tasks = false;
+
+int16_t tauQ10;
+int16_t hight_mm_corrected;
+
 // used for Test function
 uint32_t control_signals_counter;
 uint8_t control_flag, stop_flag;
@@ -28,8 +40,9 @@ uint8_t control_flag, stop_flag;
 
 
 wxyz_16t system_q, system_q_ref;
-int16_t q_yaw_correction[4], q_axis_correction[4];
-
+int16_t q_yaw_correction[4], q_axis_correction[4], system_r33;
+int16_t a_imu[3], w_imu[3];
+at_angl_t system_euler_angle;
 motor_signals_16t motor_seed_esc;
 
 // debug
@@ -41,11 +54,19 @@ float euler_debug_ax_roll, euler_debug_ax_pitch,euler_debug_ax_yaw;
 at_angl_f debug_ref_euler, debug_sys_euler;
 
 static void highspeed_task(void);
+static void middle_speed_task(void);
 static void LED_heartbeat(bool flag);
 static void sysetem_ready_check(bool *flag, const int16_t *q);
 static void get_control_quaternion_from_euler_command(at_control_f euler, int16_t *q_ref);
+static void read_DMA_buffer(void);
+static int16_t get_r33_from_quaternion(const int16_t *q);
+static void SAFETY_function_tasks(void);
 
 void task_init(void){
+
+	tauQ10 = 0;
+
+	// ONLY 'SYSTEM_STOP' ARE ALLOWED IF BATTERY ARE CONNECTED
 
 //	system_state = SYSTEM_INIT;
 //	system_state = SYSTEM_START;
@@ -69,8 +90,9 @@ void task_init(void){
 //	init_orientation();
 	init_attitude_control();
 	init_control_functions();
-	init_sensors();
+
 	init_motor();
+	init_position_control();
 	attitude_control_signals.T = 0;
 	attitude_control_signals.pitch = 0;
 	attitude_control_signals.roll = 0;
@@ -81,6 +103,14 @@ void task_init(void){
 	stop_flag = OFF;
 
 	HAL_Delay(80);
+	init_sensors();
+	init_tasks = true;
+//
+//	int16_t test =  32767;
+//	int16_t angle_test = q15_acos(test);
+//
+//	int x = 0;
+
 
 
 //	calculate_offset_values_imu();
@@ -100,12 +130,21 @@ void service_functions(void){
 }
 
 void time_management(void){
-	set_log_data_flag();
-	service_functions();
-	highspeed_task();
-}
-wxyz_16t q_filter;
 
+
+	read_DMA_buffer();		//
+	if(init_tasks){
+
+	service_functions();	// Service functions
+	middle_speed_task();	// position control
+	highspeed_task();		// attitude control
+	SAFETY_function_tasks();// safty functions
+	}
+//	Tick_500Hz_Handler(&optical_flow);
+
+}
+wxyz_16t q_filter,q_debug_yaw;
+int16_t angle_from_encoder_Q15;
 /**
  * @brief		Highspeed Task
  *
@@ -113,7 +152,10 @@ wxyz_16t q_filter;
  * 				and communication with the motors.
  */
 static void highspeed_task(void){
-	int16_t q[4], w[3],q_att_ref[4];
+	static int16_t q_yaw[4] = {Q15, 0, 0, 0};
+	static uint16_t init_yaw_counter = 0;
+	static bool init_yaw_sucsess = 0;
+	int16_t q[4], w[3],a[3],q_att_ref[4];
 	int16_t tau[3], u[4];
 	float u_f[4][1], w_f[4][1];
 	static int32_t ramp_speed = 0;
@@ -121,17 +163,30 @@ static void highspeed_task(void){
 	static bool system_ready = 0;
 	// debug
 	int16_t euler[3];
+	angle_from_encoder_Q15 = (int16_t)((int16_t)read_encoder_value());
 
-
-	get_quaternion_Q15(q, w);
+	get_quaternion_Q15(q, w,a);
 
 	debug_w.x = w[0];
 	debug_w.y = w[1];
 	debug_w.z = w[2];
 
+	a_imu[0] = a[0];	a_imu[1] = a[1];	a_imu[2] = a[2];
+	w_imu[0] = w[0];	w_imu[1] = w[1];	w_imu[2] = w[2];
+
+	if(!init_yaw_sucsess){
+		if(init_yaw_counter++ > YAW_OFFSET_TIME){
+			create_init_yaw_quaternion(q_yaw);
+			init_yaw_sucsess = 1;
+			q_debug_yaw.w = q_yaw[0];	q_debug_yaw.x = q_yaw[1]; q_debug_yaw.y = q_yaw[2]; q_debug_yaw.z = q_yaw[3];
+		}
+	}
+	multiplicateQuaternionQ15(q_yaw, q, q);
 	if(POSTFILTER_ATT){
 		filter_SLERP_EMA_quaternion_Q15(q, q);
 	}
+
+	system_r33 = get_r33_from_quaternion(q);
 //	if(q[0]<0){
 //		q[0] = -q[0];
 //		q[1] = -q[1];
@@ -145,9 +200,9 @@ static void highspeed_task(void){
 //	correct_q_axis(q,w);
 
 	quat_to_euler_q15(q, euler);
-	euler_debug_ax_roll = (float)euler[0] * 180.0f / (float)Q15;
-	euler_debug_ax_pitch = (float)euler[1] * 180.0f / (float)Q15;
-	euler_debug_ax_yaw = (float)euler[2] * 180.0f / (float)Q15;
+	system_euler_angle.roll = euler[0];// * 180.0f / (float)Q15;
+	system_euler_angle.pitch = euler[1];// * 180.0f / (float)Q15;
+	system_euler_angle.yaw = euler[2];// * 180.0f / (float)Q15;
 //	correct_q_axis
 
 	motor_seed_esc = get_motorspeed_from_ESC();
@@ -183,7 +238,7 @@ static void highspeed_task(void){
 			motor.state_m_2 = MOTOR_STOPP;
 			motor.state_m_3 = MOTOR_STOPP;
 			motor.state_m_4 = MOTOR_STOPP;
-
+			set_postion_control_stats_to_zero();
 			// send the speed command to M1 - M4
 			if(run_motors(&motor) != OK){
 				// error
@@ -217,7 +272,7 @@ static void highspeed_task(void){
 		clear_control_functions();
 
 		if(ramp_speed < 3000){
-			ramp_speed += 6;
+			ramp_speed += 8;
 		}else{
 			system_state = SYSTEM_START;
 		}
@@ -241,25 +296,8 @@ static void highspeed_task(void){
 
 		get_control_quaternion_from_euler_command(attitude_control_signals,q_att_ref);
 
-//		q_att_ref[0] = (int16_t)( 0.9818f * Q15);
-//		q_att_ref[1] = (int16_t)( 0.0641 * Q15);
-//		q_att_ref[2] = (int16_t)( -0.1436 * Q15);
-//		q_att_ref[3] = (int16_t)( 0.1060 * Q15);
-
-//		q_att_ref[0] = (int16_t)( 1.0f * Q15);
-//		q_att_ref[1] = (int16_t)( 0.0f * Q15);
-//		q_att_ref[2] = (int16_t)( 0.0f * Q15);
-//		q_att_ref[3] = (int16_t)( 0.0f * Q15);
-
-		system_q_ref.w = q_att_ref[0];
-		system_q_ref.x = q_att_ref[1];
-		system_q_ref.y = q_att_ref[2];
-		system_q_ref.z = q_att_ref[3];
-//		q_att_ref[0] = (int16_t)(13731);
-//		q_att_ref[1] = (int16_t)(-15570);
-//		q_att_ref[2] = (int16_t)(12978);
-//		q_att_ref[3] = (int16_t)(21780);
-
+		system_q_ref.w = q_att_ref[0];	system_q_ref.x = q_att_ref[1];
+		system_q_ref.y = q_att_ref[2];	system_q_ref.z = q_att_ref[3];
 
 		// only debug/control:
 		int16_t euler_ref_debug[3], euler_sys_debug[3];
@@ -295,18 +333,7 @@ static void highspeed_task(void){
 		u[2] = tau[1];
 		u[3] = tau[2];
 
-
-
-
 		transform_u2_motorSpeed(u,&motor);
-
-
-//		debug_speed_counter++;
-//		if(debug_speed_counter > 10000) debug_speed_counter = -10000;
-//		motor.m_1 = debug_speed_counter;
-//		motor.m_2 = debug_speed_counter;
-//		motor.m_3 = debug_speed_counter;
-//		motor.m_4 = debug_speed_counter;
 
 
 
@@ -333,7 +360,7 @@ static void highspeed_task(void){
 		motor.state_m_2 = MOTOR_STOPP;
 		motor.state_m_3 = MOTOR_STOPP;
 		motor.state_m_4 = MOTOR_STOPP;
-
+		set_postion_control_stats_to_zero();
 		// send the speed command to M1 - M4
 		if(run_motors(&motor) != OK){
 			// error
@@ -350,12 +377,25 @@ static void highspeed_task(void){
 
 }
 
-POS_COUNTER =5;
+int16_t gyro_real;
 static void middle_speed_task(void){
-	static middle_speed_counter = 0;
-	if(middle_speed_counter++ < POS_COUNTER) return;
+	static uint8_t middle_speed_counter = 0;
+	static uint16_t pos_timeout_counter = 0;
+	int16_t x_ref[6] = {0};
+
+	if(middle_speed_counter++ < POS_FREQ_DIV) return;
+	middle_speed_counter = 0;
+	if(pos_timeout_counter++ < 300) return; // wait 3 sec; and let the sensor fusion correct the position
+
+	// ######### START MIDDLE SPEED ##########
+
+	gyro_real = read_encoder_rotational_speed(100);
+
+	if(POSITION_CONTROL == OFF) return;
+	position_control(x_ref,&system_q, &system_q_ref,a_imu,w_imu, &optical_flow, &tauQ10, &hight_mm_corrected);
 
 
+//	integrate_a_to_v
 
 }
 
@@ -365,6 +405,8 @@ static void middle_speed_task(void){
 void system_stop_function(void){
 	system_state = SYSTEM_STOP;
 }
+
+
 
 
 
@@ -619,24 +661,15 @@ at_control_f create_attitude_control_signals(void){
 
 
 }
-float euler_back_control_pitch, euler_back_control_roll, euler_back_control_yaw;
-int16_t asdf_pitch, asdf_roll,asdf_yaw, asdf_q0, asdf_q1, asdf_q2, asdf_q3;
+
 static void get_control_quaternion_from_euler_command(at_control_f euler, int16_t *q_ref){
 	int32_t roll, pitch, yaw;
 	roll = CLAMP_INT32_TO_INT16((int32_t)(euler.roll * (float)Q15 / 360.0f));
 	pitch = CLAMP_INT32_TO_INT16((int32_t)(euler.pitch * (float)Q15 / 360.0f));
 	yaw = CLAMP_INT32_TO_INT16((int32_t)(euler.yaw * (float)Q15 / 360.0f));
-	asdf_pitch = pitch;
-	asdf_roll = roll;
-	asdf_yaw = yaw;
 
 	euler_to_quat_Q15(pitch, roll, yaw,q_ref);
-
-	asdf_q0 = q_ref[0];
-	asdf_q1 = q_ref[1];
-	asdf_q2 = q_ref[2];
-	asdf_q3 = q_ref[3];
-
+	NormalizeQuaternionQ15(q_ref, q_ref);
 
 }
 
@@ -674,5 +707,84 @@ static void sysetem_ready_check(bool *flag, const int16_t *q){
 
 }
 
+static void read_DMA_buffer(void){
+	if(MTF01_GetFrame(&optical_flow)){
+//		uint8_t test =0;
 
+		if(OPTICAL_FLOW_ROTATE){
+			optical_flow.flow_vel_x = -optical_flow.flow_vel_x;
+			optical_flow.flow_vel_y = -optical_flow.flow_vel_y;
+		}
+	}
+}
+
+static int16_t get_r33_from_quaternion(const int16_t *q){
+	uint32_t xu;
+	int32_t x;
+
+	xu = ((int32_t)q[1] * q[1]) + ((int32_t)q[2] * q[2]); //Q30 ~Q31
+	x = (int32_t)Q15 - ((xu + (1 << 13)) >> 14); // 2 * Q15
+	return CLAMP_INT32_TO_INT16(x);
+}
+
+static void init_SAFETY_FUNCTION(void){
+	// wow, so much init
+}
+
+// ############# SAFTY FUNCTIONS
+/*
+ *  When the drone is close to the ground, the pitch and roll angles
+ *  must not vary too much, otherwise there is a risk of the drone
+ *  rolling over.
+ *
+ *  We say if we constantly < 30 cm over the ground, than the drone must be safe
+ */
+static void SAFETY_START_functon(void){
+	static int8_t memory_count = 0;
+	static int16_t r33_memory[3] = {0};
+
+	if(hight_mm_corrected < 300){
+		memory_count = (memory_count < 100)? (memory_count+1): memory_count;
+	}else{
+		memory_count = (memory_count > 0)? (memory_count-1):0;
+	}
+
+	if(memory_count > 50){
+		r33_memory[2] = r33_memory[1]; r33_memory[1] = r33_memory[0];
+		r33_memory[0] = system_r33;
+
+
+
+		const int16_t max_inclination = 25102; // ~40° r33 = cos(\theta)
+		if((r33_memory[0] < max_inclination) && (r33_memory[1] < max_inclination) && (r33_memory[2] < max_inclination)){
+			system_stop_function();
+		}
+
+		const int16_t max_acc_ground = 4915; // = 300°/s -> Q15_2000°/s * (300/2000)
+		if((abs(w_imu[0]) > max_acc_ground) || (abs(w_imu[1]) > max_acc_ground) ){
+			system_stop_function();
+		}
+
+	}
+
+
+}
+
+// During flight, an inclination of more than 85° is not permitted.
+static void SAFTETY_FLY_function(void){
+	static int16_t r33_memory[3] = {0};
+	r33_memory[2] = r33_memory[1]; r33_memory[1] = r33_memory[0];
+	r33_memory[0] = system_r33;
+
+	const int16_t max_inclination = 2856; // ~85° r33 = cos(\theta)
+	if((r33_memory[0] < max_inclination) && (r33_memory[1] < max_inclination) && (r33_memory[2] < max_inclination)){
+		system_stop_function();
+	}
+}
+
+static void SAFETY_function_tasks(void){
+	if(SAFTY_GROUND_LIMITATION == OFF) return;
+	SAFETY_START_functon();
+	SAFTETY_FLY_function();
+}
 

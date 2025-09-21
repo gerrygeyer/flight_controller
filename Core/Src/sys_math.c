@@ -12,10 +12,6 @@
 //#include "arm_math.h"
 uint32_t time;
 
-
-
-
-
 void multiply_matrix_with_scalar(float scalar, float in_matrix[4][4], float out_matrix[4][4]) {
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
@@ -447,7 +443,8 @@ static const int16_t acos_q15_lut_t[256] = {
 int16_t q15_acos(int16_t x)
 {
     // Betrag und Vorzeichen (Symmetrie später)
-    uint16_t ux = (x < 0) ? (uint16_t)(-x) : (uint16_t)x;
+    uint16_t ux = (x < 0) ? (uint16_t)(-(int32_t)x) : (uint16_t)x;
+
 
     // t = 1 - |x|  (Q15)
     uint16_t t_q15 = (uint16_t)Q15_ONE - ux;   // 0..32767
@@ -463,18 +460,22 @@ int16_t q15_acos(int16_t x)
     int16_t dy = (int16_t)(y1 - y0);
 
     // Linear: y = y0 + dy*(frac/128)
-    int32_t y  = (int32_t)y0 + (((int32_t)dy * (int32_t)frac) >> 7);
+    int32_t y  = (int32_t)y0 + Q7_SHIFT_ROUND((int32_t)dy * (int32_t)frac);
 
+    if(y < 0){
+    	y = -y;
+    }
     // Symmetrie für negatives x: acos(-|x|) = π - acos(|x|)
     if (x < 0) {
         y = (int32_t)Q15 - y;
         if (y < 0) y = 0;           // numerische Sicherheit
+        if (y > Q15_ONE) y = Q15_ONE;
     }
 
     // Sättigen in int16
     if (y > 32767)  y = 32767;
     if (y < -32768) y = -32768;
-    return (int16_t)y;
+    return CLAMP_INT32_TO_INT16(y);
 }
 //int16_t q15_acos(int16_t x){
 //
@@ -720,9 +721,11 @@ uint32_t sqrt_fast_uint(uint32_t n) {
  * @note        This function is `static inline` for performance and can be used in tight control loops.
  *              Result is clamped implicitly by casting to int16_t.
  */
-static inline int16_t q15_mul(int16_t a, int16_t b) {
+inline int16_t q15_mul(int16_t a, int16_t b) {
     return CLAMP_INT32_TO_INT16((Q15_SHIFT_ROUND((int32_t)a * b))); // mit Rundung
 }
+
+
 
 /**
  * @brief       Multiplies two Q15 values and doubles the result, with clamping.
@@ -740,6 +743,8 @@ static inline int16_t q15_mul(int16_t a, int16_t b) {
 static inline int16_t q15_mul_2(int16_t a, int16_t b) {
 	return CLAMP_INT32_TO_INT16((Q14_SHIFT_ROUND((int32_t)a * b))); // mit Rundung
 }
+
+
 
 void norm_2d_vector_q15(int16_t *v){
 	int32_t x = v[0];
@@ -927,17 +932,15 @@ int16_t norm_of_3D_vector(const int16_t *v){
 
     return CLAMP_INT32_TO_INT16((int32_t)sqrt_fast_uint((uint32_t)mag_sq));
 }
-
+static inline void multQuatwithConstQ15(int16_t* q, const int16_t x){
+	q[0] = q15_mul(q[0], x);	q[1] = q15_mul(q[1], x);
+	q[2] = q15_mul(q[2], x);	q[3] = q15_mul(q[3], x);
+}
 void q_t_conj_function(int16_t *q){
-	q[1] = -q[1];
-	q[2] = -q[2];
-	q[3] = -q[3];
+	q[1] = -q[1];	q[2] = -q[2];	q[3] = -q[3];
 }
 void q_t_conj_function_in_out_q15(const int16_t *q_in, int16_t *q_out){
-	q_out[0] = q_in[0];
-	q_out[1] = -q_in[1];
-	q_out[2] = -q_in[2];
-	q_out[3] = -q_in[3];
+	q_out[0] = q_in[0];	q_out[1] = -q_in[1];	q_out[2] = -q_in[2];	q_out[3] = -q_in[3];
 }
 
 void q_t_flipp(int16_t *q){
@@ -947,7 +950,8 @@ void q_t_flipp(int16_t *q){
 	q[3] = -q[3];
 }
 
-void positve_quaternion_test_Q15(int16_t *q){
+// only for copy, use only static functions, only one each calculation (static q_old !!!)
+void positive_quaternion_test_Q15(int16_t *q){
 	static int16_t q_old[4] = {Q15, 0, 0,0};
 	// unit quaternion: "naa 32 bit are enouth"
 	int32_t x = q15_mul(q[0],q_old[0]) + q15_mul(q[1],q_old[1]) + q15_mul(q[2],q_old[2]) + q15_mul(q[3],q_old[3]);
@@ -1057,7 +1061,7 @@ void euler_to_quat_Q15(const int16_t pitch, const int16_t roll, const int16_t ya
 {
     /* Halbwinkel (Q15) */
     const int16_t hr = roll >> 1;
-    const int16_t hp = pitch >> 2;
+    const int16_t hp = pitch >> 1;
     const int16_t hy = yaw >> 1;
 
     /* sin/cos der Halbwinkel (Q15) */
@@ -1153,60 +1157,132 @@ void exponential_mapping_error_Q15(const int16_t *e, int16_t *q){
 
 }
 
-void minimal_rotation(const int16_t *a, const int16_t *b, int16_t *q_out){
-	int16_t v[3], c;
-	int32_t x_i;
-	uint32_t x_u;
+// Erwartet: a,b ungefähr normiert (Q15). Liefert q_out = [w,x,y,z] in Q15.
+void minimal_rotation(const int16_t *a, const int16_t *b, int16_t *q_out)
+{
+    int16_t v[3], c_q15;
+    crossproduct_3x3_Q15(a, b, v);
+    dotporduct_3x3_Q15(a, b, &c_q15); // dot in Q15 ∈ [-Q15, Q15]
 
-	crossproduct_3x3_Q15(a,b,v);
-	dotporduct_3x3_Q15(a,b,&c);
+    // --- 180°-Sonderfall: a ≈ -b
+    // Schwelle leicht lockern, um numerische Spikes abzufangen
+    if (c_q15 <= (-Q15 + 64)) {
+        // Achse ⟂ a wählen: nimm eine Basis, die NICHT fast parallel ist
+        int16_t ref[3] = { Q15, 0, 0 }; // [1,0,0] in Q15
+        if ((a[0] > 29490) || (a[0] < -29490)) { // |ax| > ~0.9
+            ref[0] = 0; ref[1] = 32767; ref[2] = 0; // [0,1,0]
+        }
+        crossproduct_3x3_Q15(a, ref, v);
 
-	if(c < -(Q15 - 20)){
+        norm_3d_vector(v, v); // Achse normieren
+        q_out[0] = 0;         // cos(180°/2) = 0
+        q_out[1] = v[0];      // sin(180°/2)=1 → Vektorteil = Achse
+        q_out[2] = v[1];
+        q_out[3] = v[2];
+        return;
+    }
 
-	}else{
-		x_u = ((uint32_t)((int32_t)c + Q15)) >> 16; // Q15^2 * 2x -> sqrt(.. ) = Q15*sqrt(2x)
-		x_u = sqrt_fast_uint(x_u);
-		x_i = CLAMP_INT32_TO_INT16((int32_t)x_u);
-		if(x_i > 5){
-			q_out[0] = x_i >> 1;
-			q_out[1] = v[0]/x_i;
-			q_out[2] = v[1]/x_i;
-			q_out[3] = v[2]/x_i;
-		}else{
-			q_out[0] = Q15;
-			q_out[1] = 0;
-			q_out[2] = 0;
-			q_out[3] = 0;
-		}
-	}
+    // --- Regulärer Fall: s = sqrt((1 + dot)/2) in Q15
+    // (1 + c)/2 in Q15:
+    int32_t half_q15 = ((int32_t)Q15 + (int32_t)c_q15) >> 1;    // Q15
+    // Für die Wurzel in Q15 arbeite in Q30 → sqrt(Q30) = Q15
+    uint32_t half_q30 = (uint32_t)half_q15 << 15;                 // Q30
+    uint16_t s_q15 = (uint16_t)sqrt_fast_uint(half_q30);               // Q15
+
+    // den = 2*s in Q15
+    int32_t den = ((int32_t)s_q15) << 1;
+    if (den < 8) { // extrem kleiner Winkel → Identität
+        q_out[0] = Q15; q_out[1] = q_out[2] = q_out[3] = 0;
+        return;
+    }
+
+    // q_vec = (a×b) / (2*s)
+    // Division Q15/Q15 → um Q15 beizubehalten: (v<<15)/den
+    q_out[0] = (int16_t)s_q15;
+    q_out[1] = (int16_t)(((int32_t)v[0] << 15) / den);
+    q_out[2] = (int16_t)(((int32_t)v[1] << 15) / den);
+    q_out[3] = (int16_t)(((int32_t)v[2] << 15) / den);
+
+    NormalizeQuaternionQ15(q_out, q_out);
 }
 
+wxyz_16t debug_nLerp;
 void nLERP_quaternion_Q15(const int16_t *q1, const int16_t *q2, const int16_t beta, int16_t *q_out){
 	int16_t s, q_1[4];
-	int32_t x;
+	int32_t x, one_minus_beta;
 
-	dotporduct_3x3_Q15(&q1[1], &q2[1], &s);
-	if(s<0){
-		q_1[0] = -q1[0];
-		q_1[1] = -q1[1];
-		q_1[2] = -q1[2];
-		q_1[3] = -q1[3];
-	}else{
-		q_1[0] = q1[0];
-		q_1[1] = q1[1];
-		q_1[2] = q1[2];
-		q_1[3] = q1[3];
+	dotporduct_4x4_Q15(q1, q2, &s);
+		int16_t q2_[4];
+		if (s < 0) {
+		    q2_[0] = -q2[0];
+		    q2_[1] = -q2[1];
+		    q2_[2] = -q2[2];
+		    q2_[3] = -q2[3];
+		    s = -s; // optional, da dot(q1, -q2) = -s
+		} else {
+		    q2_[0] = q2[0];
+		    q2_[1] = q2[1];
+		    q2_[2] = q2[2];
+		    q2_[3] = q2[3];
+		}
+
+
+	one_minus_beta = CLAMP(((int32_t)Q15 - (int32_t)beta),0,Q15);
+
+	for(uint8_t i = 0; i<4 ;i++){
+		q_out[i] = CLAMP_INT32_TO_INT16(Q15_SHIFT_ROUND((int32_t)q1[i] * one_minus_beta + ((int32_t)q2_[i] * beta)));
+
 	}
 
-	x = Q15_SHIFT_ROUND((int32_t)q_1[0] * ((int32_t)Q15 - (int32_t)beta))+ Q15_SHIFT_ROUND((int32_t)q2[0] * (int32_t)beta);
-	q_out[0] = CLAMP_INT32_TO_INT16(x);
-	x = Q15_SHIFT_ROUND((int32_t)q_1[1] * ((int32_t)Q15 - (int32_t)beta))+ Q15_SHIFT_ROUND((int32_t)q2[1] * (int32_t)beta);
-	q_out[1] = CLAMP_INT32_TO_INT16(x);
-	x = Q15_SHIFT_ROUND((int32_t)q_1[2] * ((int32_t)Q15 - (int32_t)beta))+ Q15_SHIFT_ROUND((int32_t)q2[2] * (int32_t)beta);
-	q_out[2] = CLAMP_INT32_TO_INT16(x);
-	x = Q15_SHIFT_ROUND((int32_t)q_1[3] * ((int32_t)Q15 - (int32_t)beta))+ Q15_SHIFT_ROUND((int32_t)q2[3] * (int32_t)beta);
-	q_out[3] = CLAMP_INT32_TO_INT16(x);
+//	x = Q15_SHIFT_ROUND((int32_t)q1[0] * one_minus_beta)+ Q15_SHIFT_ROUND((int32_t)q2_[0] * (int32_t)beta);
+//	q_out[0] = CLAMP_INT32_TO_INT16(x);
+//	x = Q15_SHIFT_ROUND((int32_t)q1[1] * one_minus_beta)+ Q15_SHIFT_ROUND((int32_t)q2_[1] * (int32_t)beta);
+//	q_out[1] = CLAMP_INT32_TO_INT16(x);
+//	x = Q15_SHIFT_ROUND((int32_t)q1[2] * one_minus_beta)+ Q15_SHIFT_ROUND((int32_t)q2_[2] * (int32_t)beta);
+//	q_out[2] = CLAMP_INT32_TO_INT16(x);
+//	x = Q15_SHIFT_ROUND((int32_t)q1[3] * one_minus_beta)+ Q15_SHIFT_ROUND((int32_t)q2_[3] * (int32_t)beta);
+//	q_out[3] = CLAMP_INT32_TO_INT16(x);
 
+//	debug_nLerp.w = q_out[0];
+//	debug_nLerp.x = q_out[1];
+//	debug_nLerp.y = q_out[2];
+//	debug_nLerp.z = q_out[3];
 	NormalizeQuaternionQ15(q_out, q_out);
 }
 
+void SLERP_quaternion_Q15(const int16_t *q1, const int16_t *q2, const uint16_t beta, int16_t *q_out){
+	int16_t s, theta, sin_theta,sin_theta_1_t,sin_theta_t, q_1[4], x1,x2;
+	int32_t one_minus_beta;
+
+
+	dotporduct_4x4_Q15(q1, q2, &s);
+	int16_t q2_[4];
+	if (s < 0) {
+	    q2_[0] = -q2[0];
+	    q2_[1] = -q2[1];
+	    q2_[2] = -q2[2];
+	    q2_[3] = -q2[3];
+	    s = -s; // optional, da dot(q1, -q2) = -s
+	} else {
+	    q2_[0] = q2[0];
+	    q2_[1] = q2[1];
+	    q2_[2] = q2[2];
+	    q2_[3] = q2[3];
+	}
+
+
+
+	theta = q15_acos(s);
+	sin_theta_t = sin_Q15(q15_mul((int16_t)beta,theta));
+	sin_theta_1_t = sin_Q15(q15_mul((Q15 - (int16_t)beta),theta));
+	sin_theta = sin_Q15(theta);
+
+	x1 = CLAMP_INT32_TO_INT16(((int32_t)sin_theta_1_t << 15)/sin_theta);
+	x2 = CLAMP_INT32_TO_INT16(((int32_t)sin_theta_t << 15)/sin_theta);
+
+	for(uint8_t i = 0; i<4 ;i++){
+		q_out[i] = CLAMP_INT32_TO_INT16(Q15_SHIFT_ROUND((int32_t)x1 * q1[i] + (int32_t)x2 * q2_[i]));
+	}
+	NormalizeQuaternionQ15(q_out, q_out);
+
+}

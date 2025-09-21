@@ -17,6 +17,8 @@
 //#include <tof400c_vl53l1x.h>
 //#include "../../sensors/imu/mpu6050.h"
 
+#define CF_MAG_BETA					0
+
 #define SENSOR_FUSION_FREQUENCY_IMU 1000 	// Hz
 #define SENSOR_FUSION_FREQUENCY_MAG	80		// Hz
 #define GYRO_GRAD_TO_RAD_Q15		9370 // 2^15/2000 * pi/180 * 2^15
@@ -43,7 +45,7 @@ void task_imu_sensor_fusion(void);
 void mag_ready(void);
 
 
-void get_quaternion_Q15(int16_t *q, int16_t *w);
+void get_quaternion_Q15(int16_t *q, int16_t *w, int16_t *a);
 
 /**
  * @brief Returns a direct pointer to the live sensor fusion data.
@@ -53,6 +55,26 @@ void get_quaternion_Q15(int16_t *q, int16_t *w);
  */
 sensor_fusion* read_sensorfusion_data(void);
 
+/**
+ * @brief   Computes an initial yaw offset quaternion from accelerometer and magnetometer data.
+ *
+ * @details This function estimates the initial yaw angle using tilt-compensated magnetometer
+ *          measurements together with accelerometer data. The resulting quaternion represents
+ *          a pure rotation around the world Z-axis that cancels the initial yaw offset.
+ *          It can be applied to the attitude estimator so that the yaw angle is set to zero at startup.
+ *
+ * @param[out]  q_out   Pointer to a 4-element array (Q15 format) that will store the quaternion
+ *                      [w, x, y, z] representing the yaw offset.
+ *
+ * @note    The input data is taken from global sensor structures (accelerometer and magnetometer)
+ *          and must be calibrated (hard-iron and soft-iron compensation applied) before use.
+ *
+ * @warning This function should only be called once during initialization, when the system is stationary
+ *          and valid accelerometer/magnetometer readings are available.
+ *
+ * @see     hardiron_apply_q15(), softiron_apply_q15(), norm_3d_vector()
+ */
+void create_init_yaw_quaternion(int16_t *q_out);
 // ######## TEST ##########
 
 void run_test_vectors(void);

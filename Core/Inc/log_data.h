@@ -17,7 +17,7 @@
 #include <parameter.h>
 
 //#define LOG_BUFFER_SIZE 512
-#define LOG_RING_SIZE 4096
+#define LOG_RING_SIZE 16384
 #define LOG_WRITE_THRESHOLD (LOG_RING_SIZE * 3 / 4)  // ab 75 % wird geschrieben
 #define LOG_SYNC_INTERVAL_MS 200                     // alle 200 ms f_sync()
 
@@ -27,7 +27,8 @@
  *            Prevents blocking during runtime by deferring file I/O.
  * @param     data Null-terminated string to log.
  */
-void Log_WriteBuffered(const char* data);
+//void Log_WriteBuffered(const char* data);
+bool Log_WriteBuffered(const char* s);
 
 /**
  * @brief     Writes buffered log data to the SD card.
@@ -53,6 +54,7 @@ bool Log_Write(const char* data);
  * @param     gyro Pointer to struct containing x, y, z values.
  */
 void Log_GyroCSV(const xyz_16t *gyro);
+void Log_IMUCSV(const xyz_16t *gyro, const xyz_16t *acc, const xyz_16t *mag, bool mag_valid);
 
 /**
  * @brief     Sets the logging trigger flag.

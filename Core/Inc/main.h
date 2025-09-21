@@ -79,8 +79,6 @@ void Error_Handler(void);
 #define GPS_Rx_GPIO_Port GPIOE
 #define GPS_Tx_Pin GPIO_PIN_8
 #define GPS_Tx_GPIO_Port GPIOE
-#define IMU_RESET_Pin GPIO_PIN_14
-#define IMU_RESET_GPIO_Port GPIOE
 #define IMU_ADDR_Pin GPIO_PIN_15
 #define IMU_ADDR_GPIO_Port GPIOE
 #define IMU_SCL_Pin GPIO_PIN_10
@@ -99,10 +97,6 @@ void Error_Handler(void);
 #define Motor3_Tx_GPIO_Port GPIOD
 #define Motor3_Rx_Pin GPIO_PIN_9
 #define Motor3_Rx_GPIO_Port GPIOD
-#define LIDAR3_SCL_Pin GPIO_PIN_12
-#define LIDAR3_SCL_GPIO_Port GPIOD
-#define LIDAR3_SDA_Pin GPIO_PIN_13
-#define LIDAR3_SDA_GPIO_Port GPIOD
 #define Motor4_Tx_Pin GPIO_PIN_6
 #define Motor4_Tx_GPIO_Port GPIOC
 #define Motor4_Rx_Pin GPIO_PIN_7
@@ -125,6 +119,10 @@ void Error_Handler(void);
 #define MAG_SCL_GPIO_Port GPIOB
 #define MAG_SDA_Pin GPIO_PIN_7
 #define MAG_SDA_GPIO_Port GPIOB
+#define LIDAR3_SCL_Pin GPIO_PIN_8
+#define LIDAR3_SCL_GPIO_Port GPIOB
+#define LIDAR3_SDA_Pin GPIO_PIN_9
+#define LIDAR3_SDA_GPIO_Port GPIOB
 #define OPTICAL_FLOW_8RX_Pin GPIO_PIN_0
 #define OPTICAL_FLOW_8RX_GPIO_Port GPIOE
 #define OPTICAL_FLOW_8TX_Pin GPIO_PIN_1

@@ -29,7 +29,7 @@
 #include <sensor_fusion.h>
 #include <parameter.h>
 #include <communication.h>
-#include "Optical_flow/mtf02_rx.h"
+#include "Optical_flow/mtf02_ring_buffer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -73,7 +73,6 @@ extern DMA_HandleTypeDef hdma_usart2_tx;
 extern DMA_HandleTypeDef hdma_usart3_tx;
 extern DMA_HandleTypeDef hdma_usart6_tx;
 extern UART_HandleTypeDef huart5;
-extern UART_HandleTypeDef huart8;
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart3;
@@ -108,58 +107,25 @@ error.NMI = true;
 /**
   * @brief This function handles Hard fault interrupt.
   */
-//void HardFault_Handler(void)
-//{
-//  /* USER CODE BEGIN HardFault_IRQn 0 */
-//	error.hard_fault = true;
-//
-//	  __disable_irq();
-//	  volatile uint32_t CFSR  = SCB->CFSR;
-//	  volatile uint32_t HFSR  = SCB->HFSR;
-//	  volatile uint32_t BFAR  = SCB->BFAR;
-//	  volatile uint32_t MMFAR = SCB->MMFAR;
-//	  while (1) {
-//	    __NOP(); // Breakpoint hier setzen und Werte notieren
-//	  }
-//  /* USER CODE END HardFault_IRQn 0 */
-//  while (1)
-//  {
-//    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
-//    /* USER CODE END W1_HardFault_IRQn 0 */
-//  }
-//}
-// --- Ersatz für den bestehenden Handler ---
-__attribute__((naked)) void HardFault_Handler(void)
+void HardFault_Handler(void)
 {
-  __asm volatile
-  (
-    "tst lr, #4            \n"   // Teste, ob vom MSP oder PSP gekommen
-    "ite eq                \n"
-    "mrseq r0, msp         \n"   // r0 = Stack Pointer
-    "mrsne r0, psp         \n"
-    "b HardFault_Handler_C \n"   // springe in C-Funktion
-  );
-}
+  /* USER CODE BEGIN HardFault_IRQn 0 */
+	error.hard_fault = true;
 
-// C-Funktion: bekommt Zeiger auf Stackframe (r0)
-void HardFault_Handler_C(uint32_t *stack)
-{
-  volatile uint32_t r0  = stack[0];
-  volatile uint32_t r1  = stack[1];
-  volatile uint32_t r2  = stack[2];
-  volatile uint32_t r3  = stack[3];
-  volatile uint32_t r12 = stack[4];
-  volatile uint32_t lr  = stack[5];
-  volatile uint32_t pc  = stack[6];   // <— Adresse der fehlerhaften Instruktion
-  volatile uint32_t psr = stack[7];
-
-  volatile uint32_t CFSR  = SCB->CFSR;
-  volatile uint32_t HFSR  = SCB->HFSR;
-  volatile uint32_t BFAR  = SCB->BFAR;
-  volatile uint32_t MMFAR = SCB->MMFAR;
-
-  // HIER einen Breakpoint setzen und im Debugger pc/lr/CFSR/HFSR/BFAR prüfen
-  while (1) { __NOP(); }
+	  __disable_irq();
+	  volatile uint32_t CFSR  = SCB->CFSR;
+	  volatile uint32_t HFSR  = SCB->HFSR;
+	  volatile uint32_t BFAR  = SCB->BFAR;
+	  volatile uint32_t MMFAR = SCB->MMFAR;
+	  while (1) {
+	    __NOP(); // Breakpoint hier setzen und Werte notieren
+	  }
+  /* USER CODE END HardFault_IRQn 0 */
+  while (1)
+  {
+    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
+    /* USER CODE END W1_HardFault_IRQn 0 */
+  }
 }
 
 /**
@@ -560,7 +526,9 @@ void USART3_IRQHandler(void)
 void DMA1_Stream7_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Stream7_IRQn 0 */
-
+    // HT/TC-Event: Puffer halb/voll -> abholen
+    // (HAL ruft intern Callbacks; wir holen aktiv Bytes selbst)
+    mtf_drain_dma_to_ring();
   /* USER CODE END DMA1_Stream7_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_uart8_rx);
   /* USER CODE BEGIN DMA1_Stream7_IRQn 1 */
@@ -622,19 +590,6 @@ void USART6_IRQHandler(void)
   /* USER CODE BEGIN USART6_IRQn 1 */
 
   /* USER CODE END USART6_IRQn 1 */
-}
-
-/**
-  * @brief This function handles UART8 global interrupt.
-  */
-void UART8_IRQHandler(void)
-{
-  /* USER CODE BEGIN UART8_IRQn 0 */
-  /* USER CODE END UART8_IRQn 0 */
-  HAL_UART_IRQHandler(&huart8);
-  /* USER CODE BEGIN UART8_IRQn 1 */
-
-  /* USER CODE END UART8_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

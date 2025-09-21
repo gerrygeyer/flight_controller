@@ -13,8 +13,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-bool DWT_TryInit(void);      // einmalig DWT aktivieren; true = ok
-void DWT_EnableIfNeeded(void);
-
+//bool DWT_TryInit(void);      // einmalig DWT aktivieren; true = ok
+//void DWT_EnableIfNeeded(void);
+//
 
 #endif /* INC_DWT_DELAY_H_ */

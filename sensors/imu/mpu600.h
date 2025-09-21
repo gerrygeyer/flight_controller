@@ -75,5 +75,6 @@ void MPU6000_Get_data_IT(sensor_fusion * pHandler_sf);
 void MPU6000_Service(void);
 
 uint8_t calculate_offset_values_imu(void);
+OFFSET_ACC_GYRO MPU6000_ReadAccelGyro_offset(void);
 
 #endif /* IMU_MPU600_H_ */
