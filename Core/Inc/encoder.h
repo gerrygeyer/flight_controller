@@ -18,5 +18,6 @@
 void set_encoder_to_zero(void);
 int16_t read_encoder_value(void);
 int16_t read_encoder_rotational_speed(const int16_t frequency);
+void set_encoder_to_value(int16_t value);
 
 #endif /* INC_ENCODER_H_ */

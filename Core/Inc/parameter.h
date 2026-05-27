@@ -22,7 +22,9 @@
 // #### POSITION CONTROL SETTINGS ####
 #define POS_ACC_LP_FC			20.0f
 #define POS_SPEED_HIGHT_LP_FC	5.0f
-#define POS_SPEED_XY_LP_FC		2.0f
+#define POS_SPEED_XY_LP_FC		5.0f
+
+#define POS_INTEGRATION_THRESH	1 // Bitshift -> 2^n
 
 
 
@@ -40,6 +42,7 @@
 
 #define DRONE		0
 #define IMU			1
+#define FRAME		2
 
 #define STEP_FUNCTION		0
 #define RAMP_FUNCTION		1
@@ -52,6 +55,7 @@
 #define SF_COMPLEMENTARY	1
 #define SF_EKF				2
 #define SF_AXIS_ALIGN		3
+#define SF_COMPARE_ALL		4
 #define LOG_DATA_ONLY		100
 
 #define ACC_ON				1
@@ -62,6 +66,14 @@
 #define LOG_DATA			1
 #define SOLVE_COST_FCT		2
 
+#define POSITIV				1
+#define NEGATIV				(-1)
+
+#define IIR					1
+#define BUTTERWORTH			2
+
+#define SCALEQ10			10
+#define SCALEQ13			13
 
 #define SET_IMU_OFFSET		OK
 #define SYSTEM_FREQUENCY	100 // Hz
@@ -83,37 +95,78 @@
 #define DRONE_PARAM_B_E6	0.1898f
 #define E6					1000000
 
-#define DRONE_WEIGHT_KG		1.282f //
+#define DRONE_WEIGHT_KG		1.416f //
 
 #define COST_FCT_ITERATIONS	20000
 #define COST_FCT_TOLEARANCE	1e-18f
 
 // determined experimentally
-#define IMU_GYRO_SCAL_X		1.1961f
-#define IMU_GYRO_SCAL_Y		1.1777f
+#define IMU_GYRO_SCAL_X		1.1961f // 1.99
+#define IMU_GYRO_SCAL_Y		1.1777f // 1.99
 #define IMU_GYRO_SCAL_Z		1.2169f
 
 // Optical flow settings
 
 #define OPT_FLOW_SENSOR_DIST	50 // distance from sensor to rotation center
-#define OPT_FLOW_CORR_FACTOR	2.094f
+#define OPT_FLOW_CORR_FACTOR	4.0f //2.094f
+#define OPT_FLOW_INT_HYSTER_MIN	60	/**< if value under this limit, stopp integrate speed */
+#define OPT_FLOW_INT_HYSTER_MAX	90	/**< if value over this limit, start integrate speed */
+#define OPTICAL_FLOW_ROTATE		ON	/**< Mirrors the y-axis (for be align with the axis of imu) [task.c] */
+
+// Position control
+
+#define PC_MAX_OUTPUT_ANGLE		15.0f // Degree; range [0, 180°]
+#define HIGHT_KORR_CONST		900
 
 // #### WAIT CONSTANTS ###
 
 #define YAW_OFFSET_TIME		ATTITUDE_FREQUENCY // -> 1 sec
 
+// #### SAFETY SETTINGS ####
 
+#define SAFE_MAX_INCLINATION	45.0f //
+#define SAFE_MAX_INCLI_GROUND	30.0f //
+
+#define SAFE_MIN_MOTORSPEED		1000 // RPM
+#define MIN_MOTORSPEED			0 // RPM
+#define SAFE_MAX_MOTORSPEED		5500 // RPM
+#define SAFT_MAX_MOTORSP_JUMP	800 // RPM  // Maximal allowed speed ref jump between two stats
+
+#define MOTOR1_DIRECT_OF_ROT	POSITIV
+#define MOTOR2_DIRECT_OF_ROT	NEGATIV
+#define MOTOR3_DIRECT_OF_ROT	POSITIV
+#define MOTOR4_DIRECT_OF_ROT	NEGATIV
 
 #define MOTOR_STOPP 0x00
 #define MOTOR_START 0xAA
 #define MOTOR_INIT	0xDD
 
+#define THRUST_MAX		16.0f
+#define THRUST_MIN		8.0f
+
+
 
 // LQR Control
 #define W_TRIM_RPM	4000
+#define LQR_DIFF_SCALE_SHIFT	0
+
+#define USE_PI_FOR_HIGHT		OFF
 
 
+// SENSOR FUSION
 
+#define EULER_OUTPUT		OFF
+
+#define MADGWICK_W_SCALE	ON
+#define HIGH_CORRECTION 	OFF
+
+#define COMPL_FILTER_MAX_BETA	0.95f
+#define COMPL_FILTER_MIN_BETA	0.4f
+
+#define ATT_CONT_HYBRID_LIFT	OFF
+#define ATT_CONT_HYBRID_LIFT_ALPHA	6553  // ~0.2 * Q15
+// Debug
+#define GYRO_CUTTOFF	100
 
 
 
@@ -231,6 +284,10 @@ typedef struct{
 	xyz_16t gyro_t;	/**< gyro_xyz in Q15 representation */
 
 	bool mag_updated;
+
+	xyz_16t acc_raw_t; 	/**< raw acc_xyz in Q15 representation */
+	xyz_16t gyro_raw_t;	/**< raw gyro_xyz in Q15 representation */
+
 
 	xyz_16t gyro_drift_est;
 	xyz_16t acc_drift_est;

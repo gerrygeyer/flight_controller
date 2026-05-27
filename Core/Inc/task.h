@@ -13,6 +13,7 @@
 #define SYSTEM_START 	2
 #define SYSTEM_INIT		3
 #define SYSTEM_RAMP		1
+#define TEST_MOTOR		5
 
 #define INIT_WAIT_TIME	(ATTITUDE_FREQUENCY*3) // Wait 3 sec
 
@@ -59,6 +60,8 @@ void time_management(void);
  */
 void system_stop_function(void);
 at_control_f create_attitude_control_signals(void);
+
+uint16_t get_hight_of_drone_cm_irq_save(void);
 
 
 

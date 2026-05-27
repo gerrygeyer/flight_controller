@@ -50,7 +50,7 @@ static void LIS3MDL_WriteReg(uint8_t reg, uint8_t value)
  *
  * @see       LIS3MDL_WriteReg(), LIS3MDL_ReadMagnetometer()
  */
-void LIS3MDL_Init(void)
+HAL_StatusTypeDef LIS3MDL_Init(void)
 {
 	mag_stuck_counter = 0;
 
@@ -87,9 +87,10 @@ void LIS3MDL_Init(void)
 
     // Initialer Lesezugriff zum Freischalten von DRDY
     uint8_t dummy[6];
-    HAL_I2C_Mem_Read(&hi2c1, LIS3MDL_I2C_ADDR,
+    HAL_StatusTypeDef return_value = HAL_I2C_Mem_Read(&hi2c1, LIS3MDL_I2C_ADDR,
                      0x28 | 0x80, I2C_MEMADD_SIZE_8BIT, dummy, 6, HAL_MAX_DELAY);
     mag_init = 1;
+    return return_value;
 }
 
 /**
@@ -258,16 +259,46 @@ void read_data_mag(sensor_fusion *pHandle)
  * @see   softiron_apply_q15()
  */
 
-#if SYSTEM == DRONE
+#if (SYSTEM == DRONE)
 
 // Hard-iron offset vector (scaled to Q15-compatible range)
-const int16_t hardiron_q15[3] = { -573, -2171, -4990};
+// DEFAULT
+//const int16_t hardiron_q15[3] = { -573, -2171, -4990};
+//
+//const int32_t softiron_q15[3][3] = {
+//    {  32768,   4378,   1525 },
+//    {   4378,  29344,    623 },
+//    {   1525,    623,  28004 }
+//};
 
+//const int16_t hardiron_q15[3] = { -538, -1032, -6373 };
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  30357,  -1672,  15855 },
+//    {  -1672,  29440,   9463 },
+//    {  15855,   9463,  32768 },
+//};
+
+//// === Hard-Iron Offset (Q15, ±4 Gauss) ===
+//const int16_t hardiron_q15[3] = { -1095, -1901, -6017 };
+//
+//// === Soft-Iron Matrix (Q15, max=32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  19515,   -234,    753 },
+//    {   -234,  20698,    677 },
+//    {    753,    677,  32767 },
+//};
+
+const int16_t hardiron_q15[3] = { -650, -847, -2794 };
+
+// === Soft-Iron Matrix (Q15, max=32768) ===
 const int32_t softiron_q15[3][3] = {
-    {  32768,   4378,   1525 },
-    {   4378,  29344,    623 },
-    {   1525,    623,  28004 }
+    {  22225,  -8339,  25151 },
+    {  11005,  32767,   1139 },
+    { -24104,   7272,  23711 },
 };
+
 
 //// === Hard-Iron Offset ===
 //const int16_t hardiron_q15[3] = { -1122, 657, -6604 };
@@ -309,7 +340,7 @@ const int32_t softiron_q15[3][3] = {
 
 #endif
 
-#if SYSTEM == IMU
+#if (SYSTEM == IMU)
 //// === Hard-Iron Offset ===
 //const int16_t hardiron_q15[3] = { -1859, -2111, -3630 };
 //
@@ -339,18 +370,64 @@ const int32_t softiron_q15[3][3] = {
 //    {    822,  -4410,  32768 }
 //};
 
+// DEFAULT WERT
+//// === Hard-Iron Offset ===
+//const int16_t hardiron_q15[3] = { 22, -1284, -5855 };
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  31220,    855,  -6114 },
+//    {    855,  32286,  -2814 },
+//    {  -6114,  -2814,  32768 }
+//};
+
+
+//// === Hard-Iron Offset ===
+//const int16_t hardiron_q15[3] = { -346, -1780, -2503 };
+//
+//// === Soft-Iron Matrix (Q15, max=32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  23257,   2090,  -3427 },
+//    {   2090,  30635,  -2531 },
+//    {  -3427,  -2531,  32767 },
+//};
+
+
+// DEFAULT
 // === Hard-Iron Offset ===
-const int16_t hardiron_q15[3] = { 22, -1284, -5855 };
+const int16_t hardiron_q15[3] = { -563, -1020, -818 };
 
-// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+// === Soft-Iron Matrix (Q15, max=32768) ===
 const int32_t softiron_q15[3][3] = {
-    {  31220,    855,  -6114 },
-    {    855,  32286,  -2814 },
-    {  -6114,  -2814,  32768 }
+    { -31729,  -9495,  -4229 },
+    {   6838, -32767,   4980 },
+    {   3279,  -3730, -32223 },
 };
-
-
+// NUR YAW
+//// === Hard-Iron Offset ===
+//const int16_t hardiron_q15[3] = { -1.310694e+02, -2.044060e+00, -8.290478e+01 };
+//
+//// === Soft-Iron Matrix (Q15-normalized, max element = 32768) ===
+//const int32_t softiron_q15[3][3] = {
+//    {  32768,   1981,  -1438 },
+//    {   1981,  13592,   -836 },
+//    {  -1438,   -836,   1473 }
+//};
 #endif
+
+#if (SYSTEM == FRAME)
+
+	// === Hard-Iron Offset ===
+	const int16_t hardiron_q15[3] = { -724, 155, -3213 };
+
+	// === Soft-Iron Matrix (Q15, max=32768) ===
+	const int32_t softiron_q15[3][3] = {
+	    {   4612,  26202,  19721 },
+	    {  32767,  -4497,  -1687 },
+	    {   1343,  19748, -26551 },
+	};
+#endif
+
 
 //const int32_t softiron_q15[3][3] = {
 //    {  30588,   3674,  -2487 },
@@ -403,9 +480,9 @@ void softiron_apply_q15(const int16_t *mag_raw, int16_t *mag_out){
 
 
 void hardiron_apply_q15(int16_t *mag_raw){
-	mag_raw[0] = mag_raw[0] - hardiron_q15[0];
-	mag_raw[1] = mag_raw[1] - hardiron_q15[1];
-	mag_raw[2] = mag_raw[2] - hardiron_q15[2];
+	mag_raw[0] = CLAMP_INT32_TO_INT16((int32_t)mag_raw[0] - hardiron_q15[0]);
+	mag_raw[1] = CLAMP_INT32_TO_INT16((int32_t)mag_raw[1] - hardiron_q15[1]);
+	mag_raw[2] = CLAMP_INT32_TO_INT16((int32_t)mag_raw[2] - hardiron_q15[2]);
 }
 
 

@@ -685,7 +685,7 @@ uint32_t stopp_time_measurement(void){
 	uint32_t ticks = TIM2->CNT;
 	TIM2->CNT = 0;
 
-	Output = ticks/240;
+	Output = (ticks+120)/240; // +0.5 for correct rounding
 	time = Output;
 	return (Output);
 
@@ -1139,6 +1139,10 @@ void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out
 	ln_out[0] = q15_mul_2(v[0],theta_q15);
 	ln_out[1] = q15_mul_2(v[1],theta_q15);
 	ln_out[2] = q15_mul_2(v[2],theta_q15);
+	// HOTFIX
+//	ln_out[0] = q15_mul(v[0],theta_q15);
+//	ln_out[1] = q15_mul(v[1],theta_q15);
+//	ln_out[2] = q15_mul(v[2],theta_q15);
 }
 
 void exponential_mapping_error_Q15(const int16_t *e, int16_t *q){
@@ -1156,7 +1160,7 @@ void exponential_mapping_error_Q15(const int16_t *e, int16_t *q){
 	q[3] = q15_mul(e[2],sin);
 
 }
-
+//int16_t debug_c_q15;
 // Erwartet: a,b ungefähr normiert (Q15). Liefert q_out = [w,x,y,z] in Q15.
 void minimal_rotation(const int16_t *a, const int16_t *b, int16_t *q_out)
 {
@@ -1179,6 +1183,18 @@ void minimal_rotation(const int16_t *a, const int16_t *b, int16_t *q_out)
         q_out[1] = v[0];      // sin(180°/2)=1 → Vektorteil = Achse
         q_out[2] = v[1];
         q_out[3] = v[2];
+        return;
+    }
+
+//    debug_c_q15 = c_q15;
+
+    // epsilon linear regime in Q15
+    if (c_q15 >= Q15 - 400) {  // a and b are parallel
+        q_out[0] = Q15; // cos(0/2) ~ 1
+        q_out[1] = Q1_SHIFT_ROUND(v[0]);  // ~0.5 * (a×b)
+        q_out[2] = Q1_SHIFT_ROUND(v[1]);
+        q_out[3] = Q1_SHIFT_ROUND(v[2]);
+        NormalizeQuaternionQ15(q_out, q_out);
         return;
     }
 
@@ -1284,5 +1300,137 @@ void SLERP_quaternion_Q15(const int16_t *q1, const int16_t *q2, const uint16_t b
 		q_out[i] = CLAMP_INT32_TO_INT16(Q15_SHIFT_ROUND((int32_t)x1 * q1[i] + (int32_t)x2 * q2_[i]));
 	}
 	NormalizeQuaternionQ15(q_out, q_out);
+
+}
+int16_t alpha_debug_value;
+int16_t debug_limit_angle;
+wxyz_16t q_out_limit_debug;
+void swing_twist_limit_z_axis(const int16_t *q_in, int16_t *q_out, const float max_angle){
+
+    int16_t q_twist[4], q_twist_conj[4], q_swing[4], q_swing_[4], q_out_[4];
+    static bool activate = 0;
+    static int16_t s_max, c_max,max_angle_t;
+    static bool init = false;
+    static int16_t q_last[4] = {Q15, 0, 0, 0}; // Start: Einheitsquat
+
+    if(!init){
+        max_angle_t = debug_limit_angle = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * max_angle / 180.0f));
+        s_max = sin_Q15((max_angle_t >> 1));
+        c_max = cos_Q15((max_angle_t >> 1));
+        init = true;
+    }
+
+    int32_t n = (int32_t)q_in[0] * (int32_t)q_in[0] + (int32_t)q_in[3] * (int32_t)q_in[3]; // max Q31
+    n = sqrt_fast_uint(n);
+    if(n < 20){
+        q_out[0] = Q15; q_out[1] = 0; q_out[2] = 0; q_out[3] = 0;
+        return;
+    }
+
+    q_twist[0] = CLAMP_INT32_TO_INT16(((int32_t)q_in[0] << 15)/n);
+    q_twist[1] = 0;
+    q_twist[2] = 0;
+    q_twist[3] = CLAMP_INT32_TO_INT16(((int32_t)q_in[3] << 15)/n);
+
+    q_t_conj_function_in_out_q15(q_twist, q_twist_conj);
+    multiplicateQuaternionQ15(q_in, q_twist, q_swing);
+
+    int16_t c = q_swing[0];
+    int16_t v = sqrt_fast_uint(((int32_t)q_swing[1] * (int32_t)q_swing[1] +
+                                (int32_t)q_swing[2] * (int32_t)q_swing[2]));
+    int16_t alpha = alpha_debug_value = CLAMP_INT32_TO_INT16((int32_t)q15_atan2(v, c) << 1);
+
+    if((alpha > max_angle_t+100))	activate = 1; // these 100 are necessary and i dont know why
+    if((alpha < max_angle_t-50))	activate = 0;
+
+
+
+    if(alpha > (max_angle_t >> 1)){
+        // Limitierung
+        if(v < 10) v = 10; // Schutz gegen div0
+
+        int16_t r = (((int32_t)s_max << 15)/v);
+
+        q_swing_[0] = c_max;
+        q_swing_[1] = q15_mul(q_swing[1], r);
+        q_swing_[2] = q15_mul(q_swing[2], r);
+        q_swing_[3] = 0;
+
+        multiplicateQuaternionQ15(q_swing_, q_twist, q_out_);
+        NormalizeQuaternionQ15(q_out_, q_out_);
+
+
+    // Update speichern
+    q_last[0] = q_out_[0];
+    q_last[1] = q_out_[1];
+    q_last[2] = q_out_[2];
+    q_last[3] = q_out_[3];
+    q_out_limit_debug.w = q_out_[0];
+    q_out_limit_debug.x = q_out_[1];
+    q_out_limit_debug.y = q_out_[2];
+    q_out_limit_debug.z = q_out_[3];
+    }
+
+    if(!activate){
+		// Kein Limit, Eingang durchreichen
+		q_out[0] = q_in[0];
+		q_out[1] = q_in[1];
+		q_out[2] = q_in[2];
+		q_out[3] = q_in[3];
+    }else{
+    	q_out[0] = q_out_[0];
+		q_out[1] = q_out_[1];
+		q_out[2] = q_out_[2];
+		q_out[3] = q_out_[3];
+    }
+
+//    if((alpha > max_angle_t) && (alpha < (max_angle_t + 364))){ // 364 ~2°
+//    	SLERP_quaternion_Q15(q_out,q_in,9830, q_out); // 9830 ~0.3
+//    }
+
+}
+
+
+
+void twist_z_axis(const int16_t *q_in, int16_t *q_twist){
+    // n = sqrt(q0^2 + q3^2)
+    int32_t n = (int32_t)q_in[0] * (int32_t)q_in[0] + (int32_t)q_in[3] * (int32_t)q_in[3]; // max Q31
+    n = sqrt_fast_uint(n);
+    if(n < 20){
+        q_twist[0] = Q15; q_twist[1] = 0; q_twist[2] = 0; q_twist[3] = 0;
+        return;
+    }
+
+    // q_twist = [qw, 0, 0, qz]
+    q_twist[0] = CLAMP_INT32_TO_INT16((((int32_t)q_in[0] << 15) + (n >> 1)) / n);
+    q_twist[1] = 0;
+    q_twist[2] = 0;
+    q_twist[3] = CLAMP_INT32_TO_INT16((((int32_t)q_in[3] << 15) + (n >> 1)) / n);
+
+    NormalizeQuaternionQ15(q_twist, q_twist);
+    q_t_conj_function(q_twist);
+}
+
+void twist_y_axis(const int16_t *q_in, int16_t *q_twist){
+    int32_t n = (int32_t)q_in[0] * (int32_t)q_in[0] + (int32_t)q_in[2] * (int32_t)q_in[2]; // max Q31
+    n = sqrt_fast_uint(n);
+    if(n < 20){
+    	q_twist[0] = Q15; q_twist[1] = 0; q_twist[2] = 0; q_twist[3] = 0;
+        return;
+    }
+
+    q_twist[0] = CLAMP_INT32_TO_INT16((((int32_t)q_in[0] << 15) + (n >> 1))/n);
+    q_twist[1] = 0;
+    q_twist[2] = CLAMP_INT32_TO_INT16((((int32_t)q_in[2] << 15) + (n >> 1))/n);
+    q_twist[3] = 0;
+    NormalizeQuaternionQ15(q_twist, q_twist);
+}
+
+
+void remove_yaw_component_q15(const int16_t *q_in, int16_t *q_out){
+	int16_t q_twist[4];
+	twist_y_axis(q_in,q_twist);
+	q_t_conj_function(q_twist);
+	multiplicateQuaternionQ15(q_twist, q_in, q_out); // output is swing component
 
 }

@@ -1,0 +1,18 @@
+# Doxygen-Dokumentation ignorieren
+/DoxygenDoc/
+*.dox
+
+# Mac-Systemdateien
+.DS_Store
+
+# Build-Artefakte
+/Debug/
+/build/
+
+# IDE-spezifisch (CubeIDE, Eclipse)
+.cproject
+.project
+.mxproject
+/.settings/
+/*.launch
+*.pdf

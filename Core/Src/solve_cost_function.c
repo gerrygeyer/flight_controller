@@ -14,6 +14,7 @@
 #include <solve_cost_function.h>
 #include <parameter.h>
 #include <sys_math.h>
+#include <settings.h>
 
 
 
@@ -39,11 +40,25 @@ static inline int16_t q10_round_sat(float v){
     if (s < -32768.0f) return -32768;
     return (int16_t)s;
 }
+static inline int16_t q13_round_sat(float v){
+    float s = v * Q13;
+    // symmetrisches Runden (ties to away from zero)
+    s = (s >= 0.0f) ? floorf(s + 0.5f) : ceilf(s - 0.5f);
+    if (s >  32767.0f) return  32767;
+    if (s < -32768.0f) return -32768;
+    return (int16_t)s;
+}
 
 static void convertK_q10(const float *K, int16_t dst[K_ROWS][K_COLS]){
     for (uint8_t i=0;i<K_ROWS;i++)
         for (uint8_t j=0;j<K_COLS;j++)
             dst[i][j] = q10_round_sat(K[i*6 + j]);
+}
+
+static void convertK_q13(const float *K, int16_t dst[K_ROWS][K_COLS]){
+    for (uint8_t i=0;i<K_ROWS;i++)
+        for (uint8_t j=0;j<K_COLS;j++)
+            dst[i][j] = q13_round_sat(K[i*6 + j]);
 }
 
 // --- API: Parameter setzen + Trigger ---
@@ -58,7 +73,7 @@ void run_cost_fct(float q1i,float q2i,float q3i,float q4i,float q5i,float q6i,
     K_ready = 0;
     cf_state = CF_BUSY;                      // Trigger
 }
-
+float debug_K_output_1, debug_K_output_2, debug_K_output_3;
 // --- Wird zyklisch in while(1) aufgerufen (niedrige Prio/IT-Modus kompatibel) ---
 void run_cost_function(void)
 {
@@ -81,7 +96,22 @@ void run_cost_function(void)
 
     // Ergebnis -> freien Buffer
     int16_t (*dst)[K_COLS] = ((K_version & 1u)==0u) ? K_q10_bufB : K_q10_bufA;
-    if (ok) convertK_q10(K, dst); else { cf_state = CF_IDLE; return; }
+    debug_K_output_1 = K[0]; debug_K_output_2 = K[7]; debug_K_output_3 = K[14];
+    switch(LQR_OUTPUT_RANGE){
+    case (SCALEQ10):
+		if (ok) convertK_q10(K, dst); else { cf_state = CF_IDLE; return; }
+		break;
+    case (SCALEQ13):
+		if (ok) convertK_q13(K, dst); else { cf_state = CF_IDLE; return; }
+    break;
+    default:
+    	if (ok) convertK_q10(K, dst); else { cf_state = CF_IDLE; return; }
+    	break;
+    }
+
+
+
+
 
     // Sichtbar machen: Version flippen, READY setzen
     __disable_irq();

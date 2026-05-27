@@ -14,7 +14,7 @@
 #include <main.h>
 
 void init_motor(void);
-uint8_t run_motors(motor_t * pHandle);
+uint8_t run_motors(motor_t * pHandle, uint8_t reset);
 uint8_t send_speed_status_M1(int16_t speed, uint8_t status);
 uint8_t send_speed_status_M2(int16_t speed, uint8_t status);
 uint8_t send_speed_status_M3(int16_t speed, uint8_t status);

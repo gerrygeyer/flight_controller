@@ -15,6 +15,7 @@
 #include <sys_math.h>
 #include <settings.h>
 #include <task.h>
+#include <LIS3MDL.h>
 
 #include <string.h>
 
@@ -28,7 +29,9 @@
 #define MZ 3
 
 void init_EKF(void);
+void execute_EKF_Fast_Q15(sensor_fusion *pHandle_sf, int16_t *p_out);
 
+void init_covariance_P(int32_t P[N][N]);
 // Q-Fixformate
 // - Q15: int16_t,  1.0 ->  32767
 // - Q30: int32_t,  1.0 -> 1073741824 (1<<30)
@@ -44,6 +47,10 @@ void ekf_update15_acc_qfixed(
     const int32_t R[3][3],      // in,  Q30  (Messrausch-Kovarianz)
     const int16_t r[3]          // in,  Q15  (Residual = a_unit - zpred_a)
 );
+void compute_Qd_q30(const int16_t G[15][12],
+                    const int32_t Qc[12][12],
+                    int16_t dt_q15,
+                    int32_t Qd[15][15]);
 
 
 

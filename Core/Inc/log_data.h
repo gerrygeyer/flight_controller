@@ -54,8 +54,8 @@ bool Log_Write(const char* data);
  * @param     gyro Pointer to struct containing x, y, z values.
  */
 void Log_GyroCSV(const xyz_16t *gyro);
-void Log_IMUCSV(const xyz_16t *gyro, const xyz_16t *acc, const xyz_16t *mag, bool mag_valid);
-
+//void Log_IMUCSV(const xyz_16t *gyro, const xyz_16t *acc, const xyz_16t *mag, bool mag_valid);
+void Log_IMUCSV(const xyz_16t *gyro, const xyz_16t *acc, const xyz_16t *mag, bool mag_valid, wxyz_16t *q);
 /**
  * @brief     Sets the logging trigger flag.
  * @details   Marks that a new data sample is ready to be logged.

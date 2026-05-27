@@ -19,13 +19,14 @@
 
 #define CF_MAG_BETA					0
 
-#define SENSOR_FUSION_FREQUENCY_IMU 1000 	// Hz
+#define SENSOR_FUSION_FREQUENCY_IMU 999 	// Hz
 #define SENSOR_FUSION_FREQUENCY_MAG	80		// Hz
 #define GYRO_GRAD_TO_RAD_Q15		9370 // 2^15/2000 * pi/180 * 2^15
 #define GYRO_GRAD_TO_RAD_DELTA_T_Q15	(DEGREE_TO_RAD * 2000.0f / (float)SENSOR_FUSION_FREQUENCY_IMU) * (float)Q15
 
 #define GRAD2RAD_GYRO 	34.906585f
-#define GRAD2RAD_GYRO_MAX_Q15 	939 // (1/2000'°/s')* (2*pi/360°) -> Gyro * 938.7341; max output = 34,9 rad/s
+//#define GRAD2RAD_GYRO_MAX_Q15 	939 // (1/2000'°/s')* (2*pi/360°) -> Gyro * 938.7341; max output = 34,9 rad/s
+#define GRAD2RAD_GYRO_MAX_Q15 	30039 // Q5 / (1/2000'°/s')* (2*pi/360°) -> Gyro * 938.7341; max output = 34,9 rad/s
 #define GRAD2RAD_GYR_MAX_SC_Q15	7510 //GRAD2RAD_GYRO_MAX_Q15 << 3
 /*
  * normierter_wert = deg_per_sec / 2000

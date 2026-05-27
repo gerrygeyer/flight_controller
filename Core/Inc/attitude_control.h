@@ -24,6 +24,13 @@ void set_init_yaw_position(const int16_t *q, int16_t *q_yaw_corr, int16_t *q_axi
 void correct_q_axis(int16_t *q, int16_t *w);
 void attitude_control_quaternion_nonlinear_q15(const int16_t *q,const int16_t *q_ref, const int16_t *w_gyro_t, int16_t *tau);
 void filter_SLERP_EMA_quaternion_Q15(const int16_t *q_in, int16_t *q_out);
+void Safty_function_Motor_RPM_output(motor_t *pHandle_motor, uint8_t reset);
+void q_error_hybrid_lifting(const int16_t *q_m,
+                            const int16_t *q_d,
+                            int16_t *q_output,
+                            const int16_t alpha,
+                            const uint8_t reset);
+
 //#define RAD_MAX_16		4
 #define RAD_MAX_32		5
 //#define RAD_MAX_64		6

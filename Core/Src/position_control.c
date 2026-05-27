@@ -9,6 +9,10 @@
 #include <position_control.h>
 #include <solve_cost_function.h>
 #include <parameter.h>
+#include <string.h>
+
+//		stopp_time_measurement();
+//		start_time_measurement();
 
 
 float Ki_pos_xy,Ki_pos_z, Ki_acc_xy,Ki_acc_z, dt;
@@ -22,7 +26,7 @@ static inline void copy_q(const int16_t *q_in, int16_t *q_copy);
 static inline void neg_q_Q15(int16_t *q);
 static inline void multQuatwithConstQ15(int16_t* q, const int16_t x);
 static void get_state_error(const int16_t *x_pos_acc, const int16_t *x_pos_acc_ref, int16_t *x_error);
-static void integrate_error(const int16_t *error, const int16_t *deltaT_K_i, int16_t *integral);
+static void integrate_error(const int16_t *error, const int16_t *deltaT_K_i, int16_t *integral, uint8_t reset);
 static void get_delta_K(float Ki_pos_xy, float Ki_pos_z, float Ki_acc_xy, float Ki_acc_z, float dt, int16_t *delta_K);
 static void lqr_q15(const int16_t *x_error,int16_t *u_out, const int16_t K_q10[3][6]);
 static void remove_gravity_q10(int16_t *u_q5);
@@ -38,20 +42,29 @@ static void position_iir_filter_w12_phase_shift_Q15(const int16_t *pos_raw, int1
 static void remove_constant_offset(const int16_t *u, int16_t *y);
 static void position_iir_filter_hight_Q15(const int16_t *pos_raw, int16_t *pos_filter, const float fc, const float Ts);
 static void position_iir_filter_f(int32_t *v_x, int32_t * v_y, float fc, float frequency);
-
+static bool hysterese_flow_quality(const uint8_t limit_low, const uint8_t limit_high,const uint8_t quality_factor);
+static void position_iir_filter_speed_xy_f(int16_t *speed, float fc, float Ts);
+static void position_fir_filter_speed_xy_f(int16_t *speed);
+static void integrate_position_q15(int16_t *position, int16_t *speed, const int16_t dt, uint8_t reset);
+static void transform_x_to_Q10(int16_t *x);
+static void position_iir_filter_x_err_Q15(const int16_t *input, int16_t *output, const float fc, const float Ts);
+static int16_t integrate_error_only_hight(const int16_t error, uint8_t reset);
+static int16_t pi_control_hight(int16_t x_err, uint8_t reset);
 void init_position_control(void){
 
-	Ki_pos_xy 	= 1.0f;
-	Ki_pos_z 	= 1.0f;
-	Ki_acc_xy 	= 1.0f;
-	Ki_acc_z 	= 1.0f;
+	Ki_pos_xy 	= 0.1f;
+	Ki_pos_z 	= 0.5f;
+	Ki_acc_xy 	= 0.1f;
+	Ki_acc_z 	= 0.1f;
 	dt			= 1.0f / (float)POSITION_FREQUENCY;
 
 	weight_kg_q10 = CLAMP_INT32_TO_INT16((int32_t)(DRONE_WEIGHT_KG * (float)Q10));
 	opt_flow_w_corr = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * OPT_FLOW_CORR_FACTOR / 34.9f));
 
 	if(LOOP_EXERCISE == SOLVE_COST_FCT){
-		float Q_p[6] = {0.1,0.1,0.1, 2, 2, 2};
+//		float Q_p[6] = {4,4,0.8, 2.5, 2.5, 3.5};
+//		float Q_p[6] = {12,12,18, 0.1, 0.1, 0.6};
+		float Q_p[6] = {15,15,0.8, 0.1, 0.1, 0.02};
 		float R_p[3] = {1, 1, 1};
 		float Ts = 1/((float)POSITION_FREQUENCY);
 		run_cost_fct(Q_p[0],Q_p[1],Q_p[2],Q_p[3],Q_p[4],Q_p[5],R_p[0],R_p[1],R_p[2],Ts);
@@ -66,28 +79,34 @@ void init_position_control(void){
 
 	}
 }
-xyz_16t debug_position, debug_pos_vel, debug_pos_speed, debug_pos_vel_filter;
+xyz_16t debug_position, debug_pos_vel, debug_pos_speed, debug_pos_vel_filter,debug_euler_reference_position;
 int16_t debug_position_hight = 0;
-int16_t debug_tauQ10;
-wxyz_16t q_pos_ref_output;
-void position_control(const int16_t *x_pos_acc_ref,const wxyz_16t *system_q, wxyz_16t *system_q_ref,const int16_t *a, const int16_t *w, const mtf01_payload_t *optic_flow, int16_t *tauQ10, int16_t *hight_mm_corrected){
-
-	static int16_t speed_NED_cm_s[3] = {0}, position_cm[3] = {0},hight_mm = 0, hight_mm_old = 0;
+int16_t debug_tauQ10, debug_speed_bitsh_x,debug_speed_bitsh_y;
+wxyz_16t q_pos_ref_output, q_bevor_twist, q_after_twist;
+int16_t debug_lqr_x_state_4, debug_lqr_x_state_5;
+void position_control(const int16_t *x_pos_acc_ref,const wxyz_16t *system_q, wxyz_16t *system_q_ref,const int16_t *a, const int16_t *w, const mtf01_payload_t *optic_flow, int16_t *tauQ10, int16_t *hight_mm_corrected, uint8_t reset){
+// 100 Hz
+	static int16_t speed_NED_cm_s[3] = {0}, position_cm[3] = {0},hight_mm = 0, hight_mm_old = 0, safety_hight = 0;
 	static uint8_t optical_flow_50hz = 0;
 	static uint8_t optical_flow_10hz = 0;
+	static uint8_t system_time_buffer = 0;
 	uint32_t time_old = 0;
 	int16_t q_ref[4], q_system[4],a_body[3], a_NED[3];
 
 	const int16_t delta_t_pos = 655; // (1/50) * Q15
 	const int16_t delta_t_cm_s = 1029; // scaling_a / Frequency -> (16*g [m/s^2])/100[s] -> ((16*g/100) [cm/s^2] / 100[s] ) * Q15
 
+	if(reset > 0){
+		position_cm[0] = 0;	position_cm[1] = 0;	position_cm[2] = 0;
+		speed_NED_cm_s[0] = 0;	speed_NED_cm_s[1] = 0;	speed_NED_cm_s[2] = 0;
+	}
 	get_array_from_struct_Q15(system_q, q_system);
 //	position_filter_SLERP_EMA_quaternion_Q15(q_system,q_system);
 	position_iir_filter_acc_Q15(a,a_body, POS_ACC_LP_FC , (1.0f/100.0f));
 
 	if(optical_flow_50hz++ > 0){
 		optical_flow_50hz = 0;
-
+// ########### START 50 HZ SECTION ###############
 
 	// take the optical flow if the sensor is avalible and gives good results; Plan B: thake the acc for position (bad)
 		if(((optic_flow->flow_quality > 30) && (optic_flow->distance_mm > 10)) && COMMUNICATION_OPT_FLW){
@@ -100,58 +119,105 @@ void position_control(const int16_t *x_pos_acc_ref,const wxyz_16t *system_q, wxy
 
 			}else{
 				// no new value, take the old one
-	//			time_old = optic_flow->system_time_ms;
-
+	//			time_old = optic_flow->system_time_ms
 			}
 
-	//		int32_t delta_time_opt_flow = ((int32_t)optic_flow->system_time_ms - time_old);
+		if(optical_flow_10hz++ > 3){
+			optical_flow_10hz = 0;
+			// ########### START 10 HZ ###########
 
-			if(optical_flow_10hz++ > 3){
-					optical_flow_10hz = 0;
-
-					stopp_time_measurement();
-					start_time_measurement();
-
-				const int32_t frequency = 10; // 50 hz -> optical flow ferquency (but only 10 Hz distance measurement); 10mm = 1 cm
-				const int32_t cm_to_mm_div = 10;
-				speed_NED_cm_s[2] = CLAMP_INT32_TO_INT16((((int32_t)hight_mm - (int32_t)hight_mm_old) * frequency) / cm_to_mm_div);
-				position_iir_filter_speed_hight_Q15(&speed_NED_cm_s[2],&speed_NED_cm_s[2],POS_SPEED_HIGHT_LP_FC,(1.0f/50.0f));
-				hight_mm_old = (int32_t)hight_mm;
-			}
-	//			time_old = (int32_t)optic_flow->system_time_ms;
-
-		}else{
-
-			rotate_vector_Q15(q_system, a, a_NED);
-			a_NED[2] = CLAMP_INT32_TO_INT16((int32_t)a_NED[2] - (1<<11)); // remove gravity -> g = Q15/16 = Q11
-
-			speed_NED_cm_s[0] = CLAMP_INT32_TO_INT16((int32_t)speed_NED_cm_s[0] + q15_mul(a_NED[0],delta_t_cm_s));
-			speed_NED_cm_s[1] = CLAMP_INT32_TO_INT16((int32_t)speed_NED_cm_s[1] + q15_mul(a_NED[1],delta_t_cm_s));
-			speed_NED_cm_s[2] = CLAMP_INT32_TO_INT16((int32_t)speed_NED_cm_s[2] + q15_mul(a_NED[2],delta_t_cm_s));
-
-	//		debug_pos_speed.x = speed_NED_old[0];	debug_pos_speed.y = speed_NED_old[1];	debug_pos_speed.z = speed_NED_old[2];
-
-			position_cm[2] = CLAMP_INT32_TO_INT16(position_cm[2] + q15_mul(speed_NED_cm_s[2],delta_t_pos));
-
+			const int32_t frequency = 10; // 50 hz -> optical flow ferquency (but only 10 Hz distance measurement); 10mm = 1 cm
+			const int32_t cm_to_mm_div = 10;
+			speed_NED_cm_s[2] = CLAMP_INT32_TO_INT16((((int32_t)hight_mm - (int32_t)hight_mm_old) * frequency) / cm_to_mm_div);
+//			position_iir_filter_speed_hight_Q15(&speed_NED_cm_s[2],&speed_NED_cm_s[2],POS_SPEED_HIGHT_LP_FC,(1.0f/10.0f)); // <- error
+			hight_mm_old = (int32_t)hight_mm;
+			// ############ END 10 HZ ###########
 		}
-	position_iir_filter_speed_xy_Q15(speed_NED_cm_s,speed_NED_cm_s,POS_SPEED_XY_LP_FC,(1/50.0f));
-	debug_pos_vel.x = speed_NED_cm_s[0];	debug_pos_vel.y = speed_NED_cm_s[1]; debug_pos_vel.z = speed_NED_cm_s[2];
+		system_time_buffer = 0;
+		}else{
+			system_time_buffer++;
+			if(USE_ACC_IF_OPTFL_IS_NOT_GOOD == ON){
+			if(system_time_buffer >50){ // we have 1 sec no good measurements
+				system_time_buffer = 100; // we stay here until optical flow works again
+				rotate_vector_Q15(q_system, a, a_NED);
+				a_NED[2] = CLAMP_INT32_TO_INT16((int32_t)a_NED[2] - (1<<11)); // remove gravity -> g = Q15/16 = Q11
+
+				speed_NED_cm_s[0] = CLAMP_INT32_TO_INT16((int32_t)speed_NED_cm_s[0] + q15_mul(a_NED[0],delta_t_cm_s));
+				speed_NED_cm_s[1] = CLAMP_INT32_TO_INT16((int32_t)speed_NED_cm_s[1] + q15_mul(a_NED[1],delta_t_cm_s));
+//				speed_NED_cm_s[2] = CLAMP_INT32_TO_INT16((int32_t)speed_NED_cm_s[2] + q15_mul(a_NED[2],delta_t_cm_s));
+
+//				position_iir_filter_speed_xy_Q15(speed_NED_cm_s,speed_NED_cm_s,POS_SPEED_XY_LP_FC,(1.0f/50.0f));
+		//		debug_pos_speed.x = speed_NED_old[0];	debug_pos_speed.y = speed_NED_old[1];	debug_pos_speed.z = speed_NED_old[2];
+
+				position_cm[2] = CLAMP_INT32_TO_INT16(position_cm[2] + q15_mul(speed_NED_cm_s[2],delta_t_pos));
+			}
+			}
+		}
+
+
 //	int16_t speed_filter[3];
 //	remove_constant_offset(speed_NED_cm_s,speed_NED_cm_s);
 //	debug_pos_vel_filter.x = speed_filter[0]; debug_pos_vel_filter.y = speed_filter[1]; debug_pos_vel_filter.z = speed_filter[2];
-	position_cm[0] = CLAMP_INT32_TO_INT16(position_cm[0] + q15_mul(speed_NED_cm_s[0],delta_t_pos));
-	position_cm[1] = CLAMP_INT32_TO_INT16(position_cm[1] + q15_mul(speed_NED_cm_s[1],delta_t_pos));
+	if(hysterese_flow_quality(OPT_FLOW_INT_HYSTER_MIN,OPT_FLOW_INT_HYSTER_MAX,optic_flow->flow_quality)){
+		debug_pos_vel.x = speed_NED_cm_s[0];	debug_pos_vel.y = speed_NED_cm_s[1]; debug_pos_vel.z = speed_NED_cm_s[2];
+//		static int16_t speed_NED_cm_s_old[2] = {0};
+//		int16_t speed_short_x = debug_speed_bitsh_x = ((speed_NED_cm_s[0] + speed_NED_cm_s_old[0]) >> 1);
+//		int16_t speed_short_y = debug_speed_bitsh_y = ((speed_NED_cm_s[1] + speed_NED_cm_s_old[1]) >> 1);
+//		int16_t speed_short_x = debug_speed_bitsh_x = (speed_NED_cm_s[0] >> POS_INTEGRATION_THRESH);
+//		int16_t speed_short_y = debug_speed_bitsh_y = (speed_NED_cm_s[1] >> POS_INTEGRATION_THRESH);
+//		position_cm[0] = CLAMP_INT32_TO_INT16(position_cm[0] + q15_mul(speed_short_x,(delta_t_pos << POS_INTEGRATION_THRESH)));
+//		position_cm[1] = CLAMP_INT32_TO_INT16(position_cm[1] + q15_mul(speed_short_y,(delta_t_pos << POS_INTEGRATION_THRESH)));
+//		position_iir_filter_speed_xy_f(speed_NED_cm_s,5.0f,(1.0f/50.0f));
+
+//		position_fir_filter_speed_xy_f(speed_NED_cm_s);
+
+//		position_median_filter_speed_xy_f(speed_NED_cm_s);
+
+		integrate_position_q15(position_cm,speed_NED_cm_s,delta_t_pos,reset);
+//		position_cm[0] = CLAMP_INT32_TO_INT16(position_cm[0] + q15_mul(speed_NED_cm_s[0],delta_t_pos));
+//		position_cm[1] = CLAMP_INT32_TO_INT16(position_cm[1] + q15_mul(speed_NED_cm_s[1],delta_t_pos));
+//		speed_NED_cm_s_old[0] = speed_NED_cm_s[0];	speed_NED_cm_s_old[1] = speed_NED_cm_s[1];
+	}
+
+	// not nice, but fast fix:
+	if(position_cm[2] > 0){
+		safety_hight = position_cm[2];
+	}else{
+		position_cm[2] = safety_hight;
+	}
+
+
+
+
 //	debug_pos_vel.x = a_NED[0];	debug_pos_vel.y = a_NED[1]; debug_pos_vel.z = a_NED[2];
 	debug_position.x = position_cm[0];	debug_position.y = position_cm[1];	debug_position.z = position_cm[2];
 
 	x_pos_acc[0] = position_cm[0];		x_pos_acc[1] = position_cm[1];		x_pos_acc[2] = position_cm[2];
 	x_pos_acc[3] = speed_NED_cm_s[0];	x_pos_acc[4] = speed_NED_cm_s[1];	x_pos_acc[5] = speed_NED_cm_s[2];
 
+
+	debug_lqr_x_state_4 = x_pos_acc[3];	debug_lqr_x_state_5 = x_pos_acc[4];
+
 	x_pos_acc[2] = CLAMP(x_pos_acc[2], 0, MAX_HIGHT);
+
+	// ############# END 50 HZ ############################
 }
-	pc_lqr(x_pos_acc,x_pos_acc_ref,q_ref,tauQ10);
+	// ####### ALL VALUES IN cm ##########
+	// 100 Hz
+	pc_lqr(x_pos_acc,x_pos_acc_ref,q_ref,tauQ10,reset);
 	debug_tauQ10 = tauQ10[0];
 	hight_mm_corrected[0] = hight_mm;
+	if(SAFTY_MAX_ANGLE_POS == ON){
+		q_bevor_twist.w = q_ref[0];	q_bevor_twist.x = q_ref[1];	q_bevor_twist.y = q_ref[2];	q_bevor_twist.z = q_ref[3];
+		swing_twist_limit_z_axis(q_ref,q_ref,PC_MAX_OUTPUT_ANGLE);
+		q_after_twist.w = q_ref[0];	q_after_twist.x = q_ref[1];	q_after_twist.y = q_ref[2];	q_after_twist.z = q_ref[3];
+	}
+	if(DEBUG_MODE == ON){
+		int16_t euler[3];
+		quat_to_euler_q15(q_ref, euler);
+		debug_euler_reference_position.x = euler[0];	debug_euler_reference_position.y = euler[1];	debug_euler_reference_position.z = euler[2];
+	}
+	system_q_ref->w = q_ref[0];	system_q_ref->x = q_ref[1];	system_q_ref->y = q_ref[2];	system_q_ref->z = q_ref[3];
 	q_pos_ref_output.w = q_ref[0]; q_pos_ref_output.x = q_ref[1]; q_pos_ref_output.y = q_ref[2]; q_pos_ref_output.z = q_ref[3];
 
 }
@@ -171,44 +237,95 @@ static lqr_state debug_function_get_struct_from_array(const int16_t *array){
 }
 
 xyz_16t debug_position_uq10;
-lqr_state lqr_x_err_debug, lqr_x_ref, lqr_x_soll;
-void pc_lqr(const int16_t *x_pos_acc, const int16_t *x_pos_acc_ref, int16_t *q_ref, int16_t *tauQ10){
+lqr_state lqr_x_err_debug, lqr_x_ref, lqr_x_ist, lqr_int_x,lqr_int_x_q10;
+float debug_hight_force, debug_hight_error,debug_hight_error;
+void pc_lqr(const int16_t *x_pos_acc, const int16_t *x_pos_acc_ref, int16_t *q_ref, int16_t *tauQ10, uint8_t reset){
 
 	int16_t x_pos_acc_err[6], delta_K[6], x[6], u_q10[3], v_norm_q10;
-	static int16_t K_q10[3][6] = {
-	    {   324,      0,      0,   1661,      0,      0},
-	    {     0,    324,      0,      0,   1661,      0},
-	    {     0,      0,    324,      0,      0,   1661}
+	static int16_t K_q13[3][6] = {
+	    {   2569,      0,      0,   13195,      0,      0},
+	    {     0,    2569,      0,      0,   13195,      0},
+	    {     0,      0,    2569,      0,      0,   13195}
 	};
 	if(LOOP_EXERCISE == SOLVE_COST_FCT){
-		uint8_t k_ready = getK_matrix(K_q10);
+		uint8_t k_ready = getK_matrix(K_q13);
 		if (k_ready == 1){
 			uint8_t test = 0;
 		}
 	}
 
-	get_delta_K(Ki_pos_xy,Ki_pos_z,Ki_acc_xy,Ki_acc_z,dt,delta_K); // <- here we tatke the conversion from cm to m
+	get_delta_K(Ki_pos_xy,Ki_pos_z,Ki_acc_xy,Ki_acc_z,dt,delta_K);
 
-	lqr_x_ref = debug_function_get_struct_from_array(x_pos_acc_ref);
-	lqr_x_soll = debug_function_get_struct_from_array(x_pos_acc);
-	get_state_error(x_pos_acc,x_pos_acc_ref,x_pos_acc_err);
+	lqr_x_ref = debug_function_get_struct_from_array(x_pos_acc_ref); // reference in m
+	lqr_x_ist = debug_function_get_struct_from_array(x_pos_acc);
+	get_state_error(x_pos_acc,x_pos_acc_ref,x_pos_acc_err); // error in cm
 	lqr_x_err_debug.x1 = x_pos_acc_err[0]; lqr_x_err_debug.x2 = x_pos_acc_err[1]; lqr_x_err_debug.x3 = x_pos_acc_err[2];
 	lqr_x_err_debug.x4 = x_pos_acc_err[3]; lqr_x_err_debug.x5 = x_pos_acc_err[4]; lqr_x_err_debug.x6 = x_pos_acc_err[5];
-	integrate_error(x_pos_acc_err,delta_K,x);
-	lqr_q15(x,u_q10, K_q10);
+	if(POS_LQR_USE_INTEGRAL == ON){
+		integrate_error(x_pos_acc_err,delta_K,x,reset);
+	}else{
+		for(uint8_t i = 0; i<6;i++){
+			x[i] = x_pos_acc_err[i];
+		}
+		if(POS_LQR_INT_ONLY_HIGHT == ON){
+			x[2] = integrate_error_only_hight(x[2], reset);
+			debug_hight_error = (float)x[2];
+		}
+//		position_iir_filter_x_err_Q15(x,x_pos_acc_err,8.0f,(1.0f/100.0f));
+	}
+	lqr_int_x = debug_function_get_struct_from_array(x);
+//	transform_x_to_Q10(x);
+	lqr_int_x_q10 = debug_function_get_struct_from_array(x);
+	lqr_q15(x,u_q10, K_q13);
+	debug_position_uq10.x = u_q10[0]; debug_position_uq10.y = u_q10[1]; debug_position_uq10.z = u_q10[2];
 	// come from cm to m
 	remove_gravity_q10(u_q10);
-	debug_position_uq10.x = u_q10[0]; debug_position_uq10.y = u_q10[1]; debug_position_uq10.z = u_q10[2];
+//	debug_position_uq10.x = u_q10[0]; debug_position_uq10.y = u_q10[1]; debug_position_uq10.z = u_q10[2];
 	v_norm_q10 = norm_of_3D_vector(u_q10);
 	q_ref[0] = CLAMP_INT32_TO_INT16(v_norm_q10 + u_q10[2]);
 	q_ref[1] = -u_q10[1];
 	q_ref[2] = u_q10[0];
 	q_ref[3] = 0;
 
+//	q_ref[0] = Q15; q_ref[1] = 0; q_ref[2] = 0; q_ref[3] = 0;
+
 	NormalizeQuaternionQ15(q_ref, q_ref);
 	// Fth = norm(u) * m
 	tauQ10[0] = CLAMP_INT32_TO_INT16(Q10_SHIFT_ROUND((int32_t)weight_kg_q10 * (int32_t)v_norm_q10));
+
+	if(USE_PI_FOR_HIGHT == ON){
+		debug_hight_error = (float)x_pos_acc_err[2];
+	tauQ10[0] = pi_control_hight(-x_pos_acc_err[2],reset);
+	}else{
+
+	}
+
+	debug_hight_force = (float)tauQ10[0]/(float)Q10;
 //	v_norm_q10 = norm_of_3D_vector(u_q10);
+
+
+
+}
+
+float Kp_hight = 0.26f;
+float Ki_hight = 0.005f;
+float debug_output_pi_hight;
+static int16_t pi_control_hight(int16_t x_err, uint8_t reset){
+
+	int16_t Output;
+	static float I = 0.0f;
+	if(reset > 0){
+		I = 0.0f;
+	}
+	I += (float)x_err * Ki_hight / 100.0f;
+	I = CLAMP(I,0.0f, (float)20.0f);
+
+	float P = (float)x_err * Kp_hight;
+	float x = I + P;
+	debug_output_pi_hight = x;
+	Output = CLAMP_INT32_TO_INT16((int32_t)(x * (float)Q10));
+	return Output;
+
 }
 
 static inline void get_array_from_struct_Q15(const wxyz_16t *q_struct, int16_t *q_array){
@@ -226,99 +343,137 @@ static inline void neg_q_Q15(int16_t *q){
 	q[0] = -q[0];	q[1] = -q[1];	q[2] = -q[2];	q[3] = -q[3];
 }
 static inline void multQuatwithConstQ15(int16_t* q, const int16_t x){
-	q[0] = q15_mul(q[0], x);
-	q[1] = q15_mul(q[1], x);
-	q[2] = q15_mul(q[2], x);
-	q[3] = q15_mul(q[3], x);
+	q[0] = q15_mul(q[0], x);	q[1] = q15_mul(q[1], x);
+	q[2] = q15_mul(q[2], x);	q[3] = q15_mul(q[3], x);
 }
 
 
 static void get_state_error(const int16_t *x_pos_acc, const int16_t *x_pos_acc_ref, int16_t *x_error){
-	x_error[0] = CLAMP_INT32_TO_INT16((int32_t)x_pos_acc[0] - (int32_t)x_pos_acc_ref[0]);
-	x_error[1] = CLAMP_INT32_TO_INT16((int32_t)x_pos_acc[1] - (int32_t)x_pos_acc_ref[1]);
-	x_error[2] = CLAMP_INT32_TO_INT16((int32_t)x_pos_acc[2] - (int32_t)x_pos_acc_ref[2]);
-	x_error[3] = CLAMP_INT32_TO_INT16((int32_t)x_pos_acc[3] - (int32_t)x_pos_acc_ref[3]);
-	x_error[4] = CLAMP_INT32_TO_INT16((int32_t)x_pos_acc[4] - (int32_t)x_pos_acc_ref[4]);
-	x_error[5] = CLAMP_INT32_TO_INT16((int32_t)x_pos_acc[5] - (int32_t)x_pos_acc_ref[5]);
+	for(uint8_t i = 0;i<6;i++){
+		x_error[i] = CLAMP_INT32_TO_INT16((int32_t)x_pos_acc[i] - ((int32_t)x_pos_acc_ref[i])); // we are in cm
+	}
 }
 
 static void get_delta_K(float Ki_pos_xy, float Ki_pos_z, float Ki_acc_xy, float Ki_acc_z, float dt, int16_t *delta_K){
 
-	const float cm_to_m = 0.01; // 1/ 100
-	delta_K[0] = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * Ki_pos_xy * dt * cm_to_m));
-	delta_K[1] = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * Ki_pos_xy * dt * cm_to_m));
-	delta_K[2] = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * Ki_pos_z * dt * cm_to_m));
-	delta_K[3] = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * Ki_acc_xy * dt * cm_to_m));
-	delta_K[4] = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * Ki_acc_xy * dt * cm_to_m));
-	delta_K[5] = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * Ki_acc_z * dt * cm_to_m));
+	for(uint8_t i = 0;i<6;i++){
+		delta_K[i] = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * Ki_pos_xy * dt));
+	}
 
 }
+static void integrate_position_q15(int16_t *position, int16_t *speed, const int16_t dt, uint8_t reset){
+	static int32_t speed_q30[2] = {0};
+	if(reset >0 ){
+		speed_q30[0] = 0;
+		speed_q30[1] = 0;
+	}
 
-static void integrate_error(const int16_t *error, const int16_t *deltaT_K_i, int16_t *integral){
+	for(uint8_t i = 0; i<2;i++){
+		speed_q30[i] += (int32_t)speed[i] * dt;
+		speed_q30[i] = CLAMP(speed_q30[i], -Q30, Q30);
+		position[i] = Q15_SHIFT_ROUND(speed_q30[i]);
 
-	static int32_t error_int[6];
+	}
+}
+static void transform_x_to_Q10(int16_t *x){
+	for(uint8_t i = 0; i<6; i++){
+		x[i] = CLAMP_INT32_TO_INT16(((int32_t)x[i] * Q15) >> 5); // max_value = 2^5
+	}
+}
+/**
+ * @brief       Integrates position/velocity error values over time.
+ *
+ * @details     This function integrates an error signal (given in centimeters)
+ *              using the provided discrete integration step sizes (K_i * Δt).
+ *              The accumulated integral is internally stored in meters to avoid
+ *              scaling mismatches. The output is returned as Q15-scaled values.
+ *              The integrator can be reset to zero using the @p reset flag.
+ *
+ * @param[in]   error        Pointer to an array of 6 error terms (unit: cm).
+ * @param[in]   deltaT_K_i   Pointer to an array of 6 discrete integration step
+ *                           factors (scaled values, Q-format).
+ * @param[out]  integral     Pointer to an array of 6 accumulated integral values
+ *                           (unit: m, Q15-scaled).
+ * @param[in]   reset        If >0, the internal integrator state is cleared.
+ *
+ * @note        The function keeps an internal static accumulator buffer.
+ *              It is not reentrant or thread-safe.
+ * @warning     Call only after the integrator has been properly initialized.
+ *              Overflow protection is applied with Q35 clamping.
+ * @see         CLAMP(), Q15_SHIFT_ROUND()
+ */
+static void integrate_error(const int16_t *error, const int16_t *deltaT_K_i, int16_t *integral, uint8_t reset){
+
+	static int64_t error_int[6];
 	int32_t x[6];
 
-	x[0] = ((int32_t)error[0] * (int32_t)deltaT_K_i[0]) >> 5;  // Q25
-	x[1] = ((int32_t)error[1] * (int32_t)deltaT_K_i[1]) >> 5;
-	x[2] = ((int32_t)error[2] * (int32_t)deltaT_K_i[2]) >> 5;
-	x[3] = ((int32_t)error[3] * (int32_t)deltaT_K_i[3]) >> 5;
-	x[4] = ((int32_t)error[4] * (int32_t)deltaT_K_i[4]) >> 5;
-	x[5] = ((int32_t)error[5] * (int32_t)deltaT_K_i[5]) >> 5;
 
 
-	error_int[0] = CLAMP((error_int[0] + x[0]),-Q25,Q25);
-	error_int[1] = CLAMP((error_int[1] + x[1]),-Q25,Q25);
-	error_int[2] = CLAMP((error_int[2] + x[2]),0,Q25); // we are on ground, so...
-	error_int[3] = CLAMP((error_int[3] + x[3]),-Q25,Q25);
-	error_int[4] = CLAMP((error_int[4] + x[4]),-Q25,Q25);
-	error_int[5] = CLAMP((error_int[5] + x[5]),-Q25,Q25);
+	for(uint8_t i = 0; i<6;i++){
+		x[i] = ((int32_t)error[i] * (int32_t)deltaT_K_i[i]);  // Here from cm to m -> 100
+	}
 
-	integral[0] = CLAMP_INT32_TO_INT16(Q10_SHIFT_ROUND(error_int[0])); // Q10_SHIFT_ROUND: shift with rounding
-	integral[1] = CLAMP_INT32_TO_INT16(Q10_SHIFT_ROUND(error_int[1]));
-	integral[2] = CLAMP_INT32_TO_INT16(Q10_SHIFT_ROUND(error_int[2]));
-	integral[3] = CLAMP_INT32_TO_INT16(Q10_SHIFT_ROUND(error_int[3]));
-	integral[4] = CLAMP_INT32_TO_INT16(Q10_SHIFT_ROUND(error_int[4]));
-	integral[5] = CLAMP_INT32_TO_INT16(Q10_SHIFT_ROUND(error_int[5]));
+	error_int[0] = CLAMP((error_int[0] + x[0]),-Q35,Q35);
+	error_int[1] = CLAMP((error_int[1] + x[1]),-Q35,Q35);
+	error_int[2] = CLAMP((error_int[2] + x[2]),0,Q35); // we are on ground, so...
+	error_int[3] = CLAMP((error_int[3] + x[3]),-Q35,Q35);
+	error_int[4] = CLAMP((error_int[4] + x[4]),-Q35,Q35);
+	error_int[5] = CLAMP((error_int[5] + x[5]),-Q35,Q35);
 
+	if(reset > 0){
+//		memset(error_int, 0, sizeof(error_int));
+		for(uint8_t i = 0; i<6;i++){
+			error_int[i] = 0;
+		}
+	}
+
+	for(uint8_t i = 0; i<6;i++){
+		integral[i] = CLAMP_INT32_TO_INT16(Q15_SHIFT_ROUND(error_int[i]));
+	}
+
+}
+
+static int16_t integrate_error_only_hight(const int16_t error, uint8_t reset){
+    static float integral = 0.0f;
+
+    if(reset){
+        integral = 0.0f;
+        return 0;
+    }
+
+    // absichern gegen Ausreißer
+    if((error > 20000) || (error < -20000))
+        return (int16_t)integral;
+
+    integral += (float)error * Ki_pos_z / 100.0f; // fs = 100 Hz
+    integral = CLAMP(integral, -15000.0f, 15000.0f);
+
+    return (int16_t)integral;
 }
 
 
 
-static void lqr_q15(const int16_t *x_error,int16_t *u_out, const int16_t K_q10[3][6]){
-	int32_t x, sum;
-
-
+static void lqr_q15(const int16_t *x_error,int16_t *u_out, const int16_t K_q13[3][6]){
+	int64_t sum;
 
 	for (int i = 0; i < 3; i++) {
 		sum = 0;
 
-		x = (int32_t)K_q10[i][0] * x_error[0]; // Q10 * Q15 = Q25
-		sum += (x >> 2); // Q23
+		sum += ((int32_t)K_q13[i][0] * x_error[0]) / 100;
+		sum += ((int32_t)K_q13[i][1] * x_error[1]) / 100;
+		sum += ((int32_t)K_q13[i][2] * x_error[2]) / 100;
+		sum += ((int32_t)K_q13[i][3] * x_error[3]) / 100;
+		sum += ((int32_t)K_q13[i][4] * x_error[4]) / 100;
+		sum += ((int32_t)K_q13[i][5] * x_error[5]) / 100;
 
-		x = (int32_t)K_q10[i][1] * x_error[1];
-		sum += (x >> 2); // Q23
-
-		x = (int32_t)K_q10[i][2] * x_error[2];
-		sum += (x >> 2); // Q23
-
-		x = (int32_t)K_q10[i][3] * x_error[3];
-		sum += (x >> 2); // Q23
-
-		x = (int32_t)K_q10[i][4] * x_error[4];
-		sum += (x >> 2); // Q23
-
-		x = (int32_t)K_q10[i][5] * x_error[5];
-		sum += (x >> 2); // Q23
-
-		sum = Q13_SHIFT_ROUND(sum); // back to Q15 //-> u_max = Q5
+		sum = Q3_SHIFT_ROUND(sum);
 		u_out[i] = -CLAMP_INT32_TO_INT16(sum);
 	}
 }
 
 static void remove_gravity_q10(int16_t *u_q5){
 //	const int32_t g = 10045; //9.81 * 2^10
-	u_q5[2] = CLAMP_INT32_TO_INT16((int32_t)u_q5[2] - 10045);
+	u_q5[2] = CLAMP_INT32_TO_INT16((int32_t)u_q5[2] + 10045 + HIGHT_KORR_CONST);
 }
 
 void get_speed_and_pos_from_acc(sensor_fusion *pHandle_sf, int16_t *speed_ms_q10, int32_t *distance_m_q10){
@@ -333,6 +488,57 @@ void get_speed_and_pos_from_acc(sensor_fusion *pHandle_sf, int16_t *speed_ms_q10
 
 }
 
+static void position_iir_filter_speed_xy_f(int16_t *speed, float fc, float Ts){
+	static float a;
+	static bool init = 0;
+	static float speed_old[2] = {0};
+	if(!init){
+		init = 1;
+		a = ((PI_MULTIPLY_2 * Ts * fc)/((PI_MULTIPLY_2 * Ts * fc + 1.0f))); // ~0.3859 * Q15 // fc = 10 Hz Ts = 1/100
+	}
+	for(uint8_t i = 0; i<2;i++){
+		speed_old[i] = a * (float)speed[i] + (1.0f - a) * speed_old[i];
+		speed[i] = CLAMP_INT32_TO_INT16((int32_t)(speed_old[i]));
+	}
+
+
+
+}
+
+#define MEDIAN_WIN 8 // Fenstergröße 3, anpassbar
+
+// Hilfsfunktion zum Sortieren eines kleinen Arrays
+static void sort_int16(int16_t *v, uint8_t len){
+    for(uint8_t i=0; i<len-1; i++){
+        for(uint8_t j=i+1; j<len; j++){
+            if(v[j]<v[i]){
+                int16_t tmp = v[i];
+                v[i] = v[j];
+                v[j] = tmp;
+            }
+        }
+    }
+}
+
+
+void position_median_filter_speed_xy_f(int16_t *speed){
+    static int16_t buffer[2][MEDIAN_WIN] = {{0}};
+    static uint8_t idx = 0;
+    idx = (idx+1)%MEDIAN_WIN;
+
+    for(uint8_t i=0; i<2; i++){
+        buffer[i][idx] = speed[i]; // neuen Wert speichern
+
+        // Kopie fürs Sortieren machen
+        int16_t temp[MEDIAN_WIN];
+        for(uint8_t k=0; k<MEDIAN_WIN; k++) temp[k]=buffer[i][k];
+
+        sort_int16(temp, MEDIAN_WIN);
+
+        // Median auswählen und zurückschreiben
+        speed[i] = temp[MEDIAN_WIN/2];
+    }
+}
 
 
 
@@ -347,37 +553,47 @@ static void position_iir_filter_acc_Q15(const int16_t *acc_raw, int16_t *acc_fil
 	}
 	static int32_t acc_old[3] = {0};
 
+	for(uint8_t i = 0; i<3;i++){
+		acc_old[i] = ((a * (int32_t)acc_raw[i]) >> 15) + ((((int32_t)Q15 - a) * acc_old[i]) >> 15);
+		acc_filter[i] = acc_old[i] = CLAMP_INT32_TO_INT16(acc_old[i]);
+	}
 
-	acc_old[0] = ((a * (int32_t)acc_raw[0]) >> 15) + ((((int32_t)Q15 - a) * acc_old[0]) >> 15);
-	acc_old[1] = ((a * (int32_t)acc_raw[1]) >> 15) + ((((int32_t)Q15 - a) * acc_old[1]) >> 15);
-	acc_old[2] = ((a * (int32_t)acc_raw[2]) >> 15) + ((((int32_t)Q15 - a) * acc_old[2]) >> 15);
-
-	acc_filter[0] = acc_old[0] = CLAMP_INT32_TO_INT16(acc_old[0]);
-	acc_filter[1] = acc_old[1] = CLAMP_INT32_TO_INT16(acc_old[1]);
-	acc_filter[2] = acc_old[2] = CLAMP_INT32_TO_INT16(acc_old[2]);
 }
 
-static void integrate_a_to_v(int16_t *a, int16_t *v_sq6_q15){
-	static int32_t v_old_q25[3];
-	const int16_t delta_t =  804; // (16g/Q6) * 0.01 * (2^15)
-	v_old_q25[0] = CLAMP(((v_old_q25[0] + ((int32_t)a[0] * delta_t)) >> 5),-Q30,Q30);
-	v_old_q25[1] = CLAMP(((v_old_q25[1] + ((int32_t)a[1] * delta_t)) >> 5),-Q30,Q30);
-	v_old_q25[2] = CLAMP(((v_old_q25[2] + ((int32_t)a[2] * delta_t)) >> 5),-Q30,Q30);
-	v_sq6_q15[0] = Q10_SHIFT_ROUND(v_old_q25[0]);
-	v_sq6_q15[1] = Q10_SHIFT_ROUND(v_old_q25[1]);
-	v_sq6_q15[2] = Q10_SHIFT_ROUND(v_old_q25[2]);
+static void position_iir_filter_x_err_Q15(const int16_t *input, int16_t *output, const float fc, const float Ts){
+	static float a;
+	static bool init = 0;
+	if(!init){
+		init = 1;
+		a = ((PI_MULTIPLY_2 * Ts * fc)/((PI_MULTIPLY_2 * Ts * fc + 1.0f)));
+	}
+	static float old[6] = {0};
+	for(uint8_t i = 0; i<6;i++){
+		old[i] = (a * (float)input[i]) + ((1.0f - a) * (float)old[i]);
+		output[i] = (int16_t)old[i];
+	}
 }
-
-static void integrate_v_to_m(int16_t *v_sq6_q15, int16_t *m_sq6_q15){
-	static int32_t m_old_q25[3];
-	const int16_t delta_t = 328; // 0.01 * (2^15)
-	m_old_q25[0] = CLAMP(((m_old_q25[0] + ((int32_t)v_sq6_q15[0] * delta_t)) >> 5),-Q30,Q30);
-	m_old_q25[1] = CLAMP(((m_old_q25[1] + ((int32_t)v_sq6_q15[1] * delta_t)) >> 5),-Q30,Q30);
-	m_old_q25[2] = CLAMP(((m_old_q25[2] + ((int32_t)v_sq6_q15[2] * delta_t)) >> 5),-Q30,Q30);
-	m_sq6_q15[0] = Q10_SHIFT_ROUND(m_old_q25[0]);
-	m_sq6_q15[1] = Q10_SHIFT_ROUND(m_old_q25[1]);
-	m_sq6_q15[2] = Q10_SHIFT_ROUND(m_old_q25[2]);
-}
+//static void integrate_a_to_v(int16_t *a, int16_t *v_sq6_q15){
+//	static int32_t v_old_q25[3];
+//	const int16_t delta_t =  804; // (16g/Q6) * 0.01 * (2^15)
+//	v_old_q25[0] = CLAMP(((v_old_q25[0] + ((int32_t)a[0] * delta_t)) >> 5),-Q30,Q30);
+//	v_old_q25[1] = CLAMP(((v_old_q25[1] + ((int32_t)a[1] * delta_t)) >> 5),-Q30,Q30);
+//	v_old_q25[2] = CLAMP(((v_old_q25[2] + ((int32_t)a[2] * delta_t)) >> 5),-Q30,Q30);
+//	v_sq6_q15[0] = Q10_SHIFT_ROUND(v_old_q25[0]);
+//	v_sq6_q15[1] = Q10_SHIFT_ROUND(v_old_q25[1]);
+//	v_sq6_q15[2] = Q10_SHIFT_ROUND(v_old_q25[2]);
+//}
+//
+//static void integrate_v_to_m(int16_t *v_sq6_q15, int16_t *m_sq6_q15){
+//	static int32_t m_old_q25[3];
+//	const int16_t delta_t = 328; // 0.01 * (2^15)
+//	m_old_q25[0] = CLAMP(((m_old_q25[0] + ((int32_t)v_sq6_q15[0] * delta_t)) >> 5),-Q30,Q30);
+//	m_old_q25[1] = CLAMP(((m_old_q25[1] + ((int32_t)v_sq6_q15[1] * delta_t)) >> 5),-Q30,Q30);
+//	m_old_q25[2] = CLAMP(((m_old_q25[2] + ((int32_t)v_sq6_q15[2] * delta_t)) >> 5),-Q30,Q30);
+//	m_sq6_q15[0] = Q10_SHIFT_ROUND(m_old_q25[0]);
+//	m_sq6_q15[1] = Q10_SHIFT_ROUND(m_old_q25[1]);
+//	m_sq6_q15[2] = Q10_SHIFT_ROUND(m_old_q25[2]);
+//}
 
 static void position_iir_filter_speed_x_Q15(const int32_t *pos_raw, int32_t *pos_filter, const float fc, const float Ts){
 
@@ -466,7 +682,6 @@ static void position_iir_filter_speed_xy_Q15(const int16_t *pos_raw, int16_t *po
 	pos_old[1] = ((a * (int32_t)pos_raw[1]) >> 15) + ((((int32_t)Q15 - a) * pos_old[1]) >> 15);
 	pos_filter[1] = pos_old[1] = CLAMP_INT32_TO_INT16(pos_old[1]);
 
-
 }
 
 static void position_iir_filter_w12_phase_shift_Q15(const int16_t *pos_raw, int16_t *pos_filter, float fc, float Ts){
@@ -501,6 +716,28 @@ static void remove_constant_offset(const int16_t *u, int16_t *y){
 		y[i] = (u[i] - y_prev[i]);
 	}
 
+}
+
+#define FIR_LEN 3 // Fensterlänge (Anpassen für steilere Filter)
+static const float fir_coeff[FIR_LEN] = {0.33f, 0.33f, 0.34f}; // z.B. Gleichgewichtung für gleitenden Mittelwert
+static float buffer[2][FIR_LEN] = {{0}}; // Für beide Achsen speichern
+static void position_fir_filter_speed_xy_f(int16_t *speed) {
+
+    static uint8_t idx = 0;
+    idx = (idx + 1) % FIR_LEN;
+
+    for (uint8_t i = 0; i < 2; i++) {
+        buffer[i][idx] = (float)speed[i];
+
+        // FIR-Berechnung
+        float tmp = 0.0f;
+        for (uint8_t k = 0; k < FIR_LEN; k++) {
+            // zirkulärer Zugang zu alten Werten
+            uint8_t circ_idx = (idx + FIR_LEN - k) % FIR_LEN;
+            tmp += fir_coeff[k] * buffer[i][circ_idx];
+        }
+        speed[i] = CLAMP_INT32_TO_INT16((int32_t)(tmp));
+    }
 }
 
 
@@ -549,6 +786,7 @@ int16_t debug_pos_vel_x, debug_pos_vel_y,debug_pos_vel1_x,debug_pos_vel1_y, debu
 int16_t debug_pos_vel_x2, debug_pos_vel_y2, w1_corr, w2_corr;
 
 float debug_speed_lp = 0.1f;
+float optical_corr_factor = OPT_FLOW_CORR_FACTOR;
 static void rotate_speed_to_world_frame(const mtf01_payload_t *optic_flow, const int16_t *q_in, const int16_t *w, const int16_t *corr_height, int16_t *v_NED){
 	// we are in NED frame
 	int32_t r11, r12, r21, r22, speed_B_x, speed_B_y, speed_E, speed_N;
@@ -566,26 +804,34 @@ static void rotate_speed_to_world_frame(const mtf01_payload_t *optic_flow, const
 	debug_pos_wx = w[0]; debug_pos_wy = w[1];
 
 	int8_t direction = -1;
-//	debug_pos_vel1_x = ((int32_t)corr_height[0] * optic_flow->flow_vel_x)/1000;
-//	debug_pos_vel1_y = ((int32_t)corr_height[0] * optic_flow->flow_vel_y)/1000;
+	debug_pos_vel1_x = ((int32_t)corr_height[0] * optic_flow->flow_vel_x)/1000;
+	debug_pos_vel1_y = ((int32_t)corr_height[0] * optic_flow->flow_vel_y)/1000;
 
 
 	position_iir_filter_w12_phase_shift_Q15(w,w_filter,1.5f,(1.0f/50.0f)); // need filter to compensate phase shift
 //
 
+	if(DEBUG_MODE == ON) opt_flow_w_corr = CLAMP_INT32_TO_INT16((int32_t)((float)Q15 * optical_corr_factor / 34.9f));
 	int16_t w1_corr = q15_mul(w_filter[1], (opt_flow_w_corr * direction));
 	int16_t w2_corr = q15_mul(w_filter[0], (opt_flow_w_corr * direction));
 
-	speed_B_x = debug_pos_vel_x = (((int32_t)corr_height[0] * optic_flow->flow_vel_x)/1000) - w1_corr; // cm/s
-	speed_B_y = debug_pos_vel_y = (((int32_t)corr_height[0] * optic_flow->flow_vel_y)/1000) + (-w2_corr); // cm/s
+//	speed_B_x = debug_pos_vel_x = (((int32_t)corr_height[0] * optic_flow->flow_vel_x)/1000) - w1_corr; // cm/s
+//	speed_B_y = debug_pos_vel_y = (((int32_t)corr_height[0] * optic_flow->flow_vel_y)/1000) + w2_corr; // cm/s
 
+	speed_B_x = (((int32_t)corr_height[0] * optic_flow->flow_vel_x)/1000); // cm/s
+	speed_B_y =  (((int32_t)corr_height[0] * optic_flow->flow_vel_y)/1000); // cm/s
 
-	speed_B_x = CLAMP_INT32_TO_INT16(speed_B_x);
-	speed_B_y = CLAMP_INT32_TO_INT16(speed_B_y);
+	if(OPTICAL_FLOW_GYRO_CORR){
+		speed_B_x -= w1_corr;
+		speed_B_y += w2_corr;
+	}
+
+	speed_B_x = debug_pos_vel_x = CLAMP_INT32_TO_INT16(speed_B_x);
+	speed_B_y = debug_pos_vel_y = CLAMP_INT32_TO_INT16(speed_B_y);
 
 //	position_iir_filter_speed_x_Q15(&speed_B_x,&speed_B_x,2.0f, (1.0f/50.0f));
 //	position_iir_filter_speed_y_Q15(&speed_B_y,&speed_B_y,2.0f, (1.0f/50.0f));
-	position_iir_filter_f(&speed_B_x,&speed_B_y,debug_speed_lp,50.0f);
+//	position_iir_filter_f(&speed_B_x,&speed_B_y,debug_speed_lp,50.0f);
 
 
 	speed_N  = Q15_SHIFT_ROUND(r11 * speed_B_x + r12 * speed_B_y);
@@ -615,6 +861,15 @@ static void get_hight_and_speed_from_optical_flow(const mtf01_payload_t *optic_f
 	rotate_speed_to_world_frame(optic_flow,q,w,hight_mm,speed_NED);
 
 
+}
+
+static bool hysterese_flow_quality(const uint8_t limit_low, const uint8_t limit_high,const uint8_t quality_factor){
+	static bool Output = false;
+
+	if(quality_factor > limit_high) Output = true;
+	if(quality_factor < limit_low)	Output = false;
+
+	return Output;
 }
 
 static void position_iir_filter_f(int32_t *v_x, int32_t * v_y, float fc, float frequency){

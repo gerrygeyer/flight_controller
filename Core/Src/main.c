@@ -167,8 +167,8 @@ int main(void)
   MX_LPUART1_UART_Init();
   MX_UART7_Init();
   MX_UART8_Init();
-  MX_SDMMC1_SD_Init();
-  MX_FATFS_Init();
+//  MX_SDMMC1_SD_Init();
+//  MX_FATFS_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 

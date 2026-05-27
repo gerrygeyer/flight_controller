@@ -37,6 +37,7 @@
 
 #define Q1					((1 << 1)-1)
 #define Q4					((1 << 4)-1)
+#define Q5					((1 << 5)-1)
 #define Q10					((1 << 10)-1)
 #define Q11					((1 << 11)-1)
 #define Q12					((1 << 12)-1)
@@ -52,6 +53,8 @@
 #define Q25					((1 << 25)-1)
 #define Q29					((1 << 29)-1)
 #define Q30					((1 << 30)-1)
+#define Q35					((1LL << 35)-1)
+#define Q60					((1LL << 60)-1)
 
 
 /**
@@ -70,6 +73,8 @@
  * @note        No rounding is applied. Use when half-scale product is intended.
  */
 #define Q15_MUL_HALF(a, b) (((int32_t)(a) * (int32_t)(b)) >> 1)
+
+#define Q30_MUL(a,b)   ((int64_t)(a) * (int64_t)(b) >> 30)
 
 /**
  * @brief   Q15 rounding right-shift with sign-dependent bias.
@@ -95,10 +100,14 @@
 #define Q15_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 14) : -(1 << 14))) >> 15)
 #define Q14_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 13) : -(1 << 13))) >> 14)
 #define Q13_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 12) : -(1 << 12))) >> 13)
+#define Q11_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 10) : -(1 << 10))) >> 11)
 #define Q10_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 9) : -(1 << 9))) >> 10)
 #define Q8_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 7) : -(1 << 7))) >> 8)
 #define Q7_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 6) : -(1 << 6))) >> 7)
 #define Q5_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 4) : -(1 << 4))) >> 5)
+#define Q4_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 3) : -(1 << 3))) >> 4)
+#define Q3_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 2) : -(1 << 2))) >> 3)
+#define Q2_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 1) : -(1 << 1))) >> 2)
 #define Q1_SHIFT_ROUND(x)   (((x) + (((x) >= 0) ? (1 << 0) : -(1 << 0))) >> 1)
 
 
@@ -527,6 +536,50 @@ void euler_to_quat_Q15(const int16_t pitch, const int16_t roll, const int16_t ya
  * @see         norm_3d_vector(), q15_acos(), q15_mul_2()
  */
 void ln_q15_unit_quaternions_multiplicate_2(const int16_t *q_in, int16_t *ln_out);
+
+/**
+ * @brief       Extracts and limits the yaw (twist around Z-axis) component from a quaternion.
+ *
+ * @details     This function decomposes the input quaternion into a swing (rotation
+ *              that aligns the vector without yaw) and a twist (rotation around the Z-axis).
+ *              If the twist angle exceeds the specified maximum, it is clamped to the limit.
+ *              The result is written as a normalized quaternion in Q15 format.
+ *
+ * @param[in]   q_in       Pointer to the input quaternion [w, x, y, z] in Q15 format.
+ * @param[in]   max_angle  Maximum allowed yaw angle in degrees (scaled internally to Q15).
+ * @param[out]  q_out      Pointer to the resulting quaternion [w, x, y, z] in Q15 format.
+ *
+ * @note        Uses static variables for sine/cosine of the limit angle; only initialized once.
+ * @warning     Input quaternion must be approximately normalized.
+ *              Function is not thread-safe due to static state.
+ * @see         multiplicateQuaternionQ15(), NormalizeQuaternionQ15()
+ */
+void swing_twist_limit_z_axis(const int16_t *q_in,int16_t *q_out, const float max_angle);
+
+
+/**
+ * @brief   Extracts the twist component of a quaternion around the y-axis.
+ *
+ * @details This function isolates the rotation part of a unit quaternion
+ *          that lies purely around the global y-axis. It does so by
+ *          projecting the quaternion onto its (w,y)-components and normalizing
+ *          the result:
+ *          \f[
+ *              q_\text{twist,y} =
+ *              \frac{[q_w,\,0,\,q_y,\,0]}{\sqrt{q_w^2+q_y^2}}
+ *          \f]
+ *          If the norm is too small, the identity quaternion is returned.
+ *
+ * @param[in]  q_in      Input quaternion in Q15 format
+ * @param[out] q_twist   Output quaternion (twist around y-axis only) in Q15 format
+ *
+ * @note      Input quaternion must be normalized to Q15 range.
+ * @warning   For very small values of (q_w, q_y) the function falls back
+ *            to returning the identity quaternion.
+ */
+void twist_y_axis(const int16_t *q_in, int16_t *q_twist);
+void twist_z_axis(const int16_t *q_in, int16_t *q_twist);
+void remove_yaw_component_q15(const int16_t *q_in, int16_t *q_out);
 
 void exponential_mapping_error_Q15(const int16_t *e, int16_t *q);
 

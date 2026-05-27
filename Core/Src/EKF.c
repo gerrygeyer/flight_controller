@@ -18,13 +18,13 @@ static inline void multQuatwithConstQ15(int16_t* q, const int16_t x);
 static inline void add2QuaternionQ15(const int16_t *q1, const int16_t *q2, int16_t *q_out);
 static void create_A_matrix(const int16_t *omega, const int16_t *acc_b, const int16_t *qk, int16_t *A);
 static void create_G_matrix(const int16_t *omega, const int16_t *acc_b, const int16_t *qk, int16_t *G);
-static void create_Qc_matrix(float sigma_g, float sigma_a,float sigma_bg, float sigma_ba,int16_t Qc[12][12]);
+static void create_Qc_matrix_q30(float sigma_g, float sigma_a,float sigma_bg, float sigma_ba,int32_t Qc[12][12]);
 static void accumulate_Phi_blocks_q15(const int16_t *A, int16_t *Phi, int16_t dt_gyro_eff, int16_t dt_acc_eff, int16_t dt_q15);
 static inline int16_t float_to_q15(float x);
 static inline int16_t q15_from_float(float x);
 static inline int16_t dt_gyro_eff_q15(float dt_s);
 static inline int16_t dt_acc_eff_q15(float dt_s, float vel_q15_per_mps);
-void compute_Qd_q30(const int16_t G[15][12], const int16_t Qc[12][12], int16_t dt_q15, int32_t Qd[15][15]);
+
 void update_P_q30(const int16_t Phi[15][15], const int32_t P_in[15][15], const int32_t Qd[15][15], int32_t P_out[15][15]);
 
 void init_EKF(void){
@@ -40,7 +40,7 @@ void execute_EKF_Fast_Q15(sensor_fusion *pHandle_sf, int16_t *p_out){
 	static int16_t vk[3] = {0,0,0};
 	static int16_t pk[3] = {0,0,0};
 	static int16_t dt_q15,dtw_q15,dta_q15;
-	static int16_t Qc[12][12];
+	static int32_t Qc[12][12];
 	static int32_t P[15][15];
 
 	static int16_t bg_q15[3] = {0,0,0}; // bias gyro estimation
@@ -61,7 +61,7 @@ void execute_EKF_Fast_Q15(sensor_fusion *pHandle_sf, int16_t *p_out){
 	const int16_t Ig_vec[3] = {0,0,Q15};
 
 	if(ekf_init == 0){
-		create_Qc_matrix(sigma_g, sigma_a,sigma_bg,sigma_ba, Qc);
+		create_Qc_matrix_q30(sigma_g, sigma_a,sigma_bg,sigma_ba, Qc);
 
 		float dt_s = 0.001; //sec -> 1000 Hz
 
@@ -419,6 +419,12 @@ static inline int16_t float_to_q15(float x) {
     if (t < -32767) t = -32767;
     return (int16_t)t;
 }
+static inline int32_t float_to_q30(float x) {
+    int64_t t = (int64_t)(x * 1073741824.0f + (x >= 0 ? 0.5f : -0.5f)); // 2^30 = 1073741824
+    if (t >  1073741823) t =  1073741823;
+    if (t < -1073741824) t = -1073741824;
+    return (int32_t)t;
+}
 
 /* Erzeugt Qc[12][12] in Q15 aus float-Noiseparametern
  * */
@@ -433,43 +439,74 @@ static inline int16_t float_to_q15(float x) {
  * @warning		all sigmal values should between 0 and 1
  * @see			andere_funktion() [Optionaler Verweis]
  */
-static void create_Qc_matrix(float sigma_g,   // gyro noise [rad/s/√Hz]
-                      float sigma_a,   // accel noise [m/s²/√Hz]
-                      float sigma_bg,  // gyro bias RW [rad/s/√s]
-                      float sigma_ba,  // accel bias RW [m/s²/√s]
-                      int16_t Qc[12][12])
-{
-    // alles auf 0 setzen
-    for (int i = 0; i < 12; i++)
-        for (int j = 0; j < 12; j++)
-            Qc[i][j] = 0;
 
-    // Normierungen auf die Q15-Sensor-Skalen
-    float s_g_n  = sigma_g  / FS_GYRO_RAD_S;
-    float s_a_n  = sigma_a  / FS_ACC_MPS2;
+static void create_Qc_matrix_q30(float sigma_g, float sigma_a,
+                                 float sigma_bg, float sigma_ba,
+                                 int32_t Qc[12][12])  // Q30!
+{
+    for (int i=0;i<12;i++) for (int j=0;j<12;j++) Qc[i][j]=0;
+
+    // Normierungen auf deine Q15-Sensor-Skalen
+    float s_g_n  = sigma_g  / FS_GYRO_RAD_S;  // [-] bezogen auf Gyro-Fullscale
+    float s_a_n  = sigma_a  / FS_ACC_MPS2;    // [-] bezogen auf Acc-Fullscale
     float s_bg_n = sigma_bg / FS_GYRO_RAD_S;
     float s_ba_n = sigma_ba / FS_ACC_MPS2;
 
-    // Quadrieren
+    // Varianzen (kontinuierliche Spektraldichten)
     float var_g  = s_g_n  * s_g_n;
     float var_a  = s_a_n  * s_a_n;
     float var_bg = s_bg_n * s_bg_n;
     float var_ba = s_ba_n * s_ba_n;
 
-    // In Q15 umwandeln
-    int16_t q_g  = CLAMP_INT32_TO_INT16((int32_t)(var_g * (float)Q15));
-    int16_t q_a  = CLAMP_INT32_TO_INT16((int32_t)(var_a * (float)Q15));
-    int16_t q_bg = CLAMP_INT32_TO_INT16((int32_t)(var_bg * (float)Q15));
-    int16_t q_ba = CLAMP_INT32_TO_INT16((int32_t)(var_ba * (float)Q15));
+    int32_t q_g  = float_to_q30(var_g);
+    int32_t q_a  = float_to_q30(var_a);
+    int32_t q_bg = float_to_q30(var_bg);
+    int32_t q_ba = float_to_q30(var_ba);
 
-    // Auf die Diagonalblöcke setzen
-    for (int i = 0; i < 3; i++) {
-        Qc[i][i]       = q_g;   // gyro noise
-        Qc[3+i][3+i]   = q_a;   // accel noise
-        Qc[6+i][6+i]   = q_bg;  // gyro bias RW
-        Qc[9+i][9+i]   = q_ba;  // accel bias RW
+    for (int i=0;i<3;i++){
+        Qc[i][i]     = q_g;   // gyro noise
+        Qc[3+i][3+i] = q_a;   // accel noise
+        Qc[6+i][6+i] = q_bg;  // gyro bias RW
+        Qc[9+i][9+i] = q_ba;  // accel bias RW
     }
 }
+//static void create_Qc_matrix(float sigma_g,   // gyro noise [rad/s/√Hz]
+//                      float sigma_a,   // accel noise [m/s²/√Hz]
+//                      float sigma_bg,  // gyro bias RW [rad/s/√s]
+//                      float sigma_ba,  // accel bias RW [m/s²/√s]
+//                      int16_t Qc[12][12])
+//{
+//    // alles auf 0 setzen
+//    for (int i = 0; i < 12; i++)
+//        for (int j = 0; j < 12; j++)
+//            Qc[i][j] = 0;
+//
+//    // Normierungen auf die Q15-Sensor-Skalen
+//    float s_g_n  = sigma_g  / FS_GYRO_RAD_S;
+//    float s_a_n  = sigma_a  / FS_ACC_MPS2;
+//    float s_bg_n = sigma_bg / FS_GYRO_RAD_S;
+//    float s_ba_n = sigma_ba / FS_ACC_MPS2;
+//
+//    // Quadrieren
+//    float var_g  = s_g_n  * s_g_n;
+//    float var_a  = s_a_n  * s_a_n;
+//    float var_bg = s_bg_n * s_bg_n;
+//    float var_ba = s_ba_n * s_ba_n;
+//
+//    // In Q15 umwandeln
+//    int16_t q_g  = CLAMP_INT32_TO_INT16((int32_t)(var_g * (float)Q15));
+//    int16_t q_a  = CLAMP_INT32_TO_INT16((int32_t)(var_a * (float)Q15));
+//    int16_t q_bg = CLAMP_INT32_TO_INT16((int32_t)(var_bg * (float)Q15));
+//    int16_t q_ba = CLAMP_INT32_TO_INT16((int32_t)(var_ba * (float)Q15));
+//
+//    // Auf die Diagonalblöcke setzen
+//    for (int i = 0; i < 3; i++) {
+//        Qc[i][i]       = q_g;   // gyro noise
+//        Qc[3+i][3+i]   = q_a;   // accel noise
+//        Qc[6+i][6+i]   = q_bg;  // gyro bias RW
+//        Qc[9+i][9+i]   = q_ba;  // accel bias RW
+//    }
+//}
 
 
 
@@ -564,37 +601,60 @@ static void accumulate_Phi_blocks_q15(const int16_t *A, int16_t *Phi,
     }
 }
 
-// G: Q15, Qc: Q15, dt: Q15  -> Qd: Q30
+// --------------------------------------------------------------
+// compute_Qd_q30
+// G:  Q15   (15x12)
+// Qc: Q30   (12x12)
+// dt: Q15
+// Qd: Q30   (15x15)
+// --------------------------------------------------------------
 void compute_Qd_q30(const int16_t G[15][12],
-                    const int16_t Qc[12][12],
+                    const int32_t Qc[12][12],
                     int16_t dt_q15,
                     int32_t Qd[15][15])
 {
+    int64_t acc;
     int32_t T[15][12];
-    // T = G*Qc (Q15*Q15 -> Q30)
-    for(int r=0;r<15;r++){
-        for(int c=0;c<12;c++){
-            int64_t acc=0;
-            for(int k=0;k<12;k++) acc += (int64_t)G[r][k]*(int64_t)Qc[k][c];
-            if (acc >  0x3FFFFFFFLL) acc =  0x3FFFFFFFLL;
-            if (acc < -0x3FFFFFFFLL) acc = -0x3FFFFFFFLL;
-            T[r][c]=(int32_t)acc;
-        }
-    }
-    // Qd = T*G^T * dt  (Q30*Q15 -> Q45 >>15 -> Q30; dann *dt Q15 -> Q45 >>15 -> Q30)
-    for(int r=0;r<15;r++){
-        for(int c=0;c<15;c++){
-            int64_t acc=0;
-            for(int k=0;k<12;k++){
-                int64_t t = (int64_t)T[r][k]*(int64_t)G[c][k]; // Q45
-                t += (t>=0 ? (1LL<<14):-(1LL<<14)); t >>= 15;   // Q30
+
+    // === Schritt 1: T = G * Qc  (Q15 * Q30 -> Q45 >>15 -> Q30)
+    for (int r = 0; r < 15; r++) {
+        for (int c = 0; c < 12; c++) {
+            acc = 0;
+            for (int k = 0; k < 12; k++) {
+                int64_t t = (int64_t)G[r][k] * (int64_t)Qc[k][c]; // Q45
+                t += (t >= 0 ? (1LL << 14) : -(1LL << 14));       // round
+                t >>= 15;                                         // -> Q30
                 acc += t;
             }
-            acc = acc * dt_q15;                                 // Q45
-            acc += (acc>=0 ? (1LL<<14):-(1LL<<14)); acc >>= 15; // Q30
+            // saturate
             if (acc >  0x3FFFFFFFLL) acc =  0x3FFFFFFFLL;
             if (acc < -0x3FFFFFFFLL) acc = -0x3FFFFFFFLL;
-            Qd[r][c]=(int32_t)acc;
+            T[r][c] = (int32_t)acc;
+        }
+    }
+
+    // === Schritt 2: Qd = (T * Gᵀ) * dt
+    // (Q30 * Q15 -> Q45 >>15 -> Q30; anschließend *dt(Q15) -> Q45 >>15 -> Q30)
+    for (int r = 0; r < 15; r++) {
+        for (int c = 0; c < 15; c++) {
+            acc = 0;
+            for (int k = 0; k < 12; k++) {
+                int64_t t = (int64_t)T[r][k] * (int64_t)G[c][k];  // Q45
+                t += (t >= 0 ? (1LL << 14) : -(1LL << 14));       // round
+                t >>= 15;                                         // -> Q30
+                acc += t;
+            }
+
+            // Multiplikation mit dt (Q15)
+            acc = acc * (int64_t)dt_q15;                          // Q45
+            acc += (acc >= 0 ? (1LL << 14) : -(1LL << 14));
+            acc >>= 15;                                           // -> Q30
+
+            // saturate
+            if (acc >  0x3FFFFFFFLL) acc =  0x3FFFFFFFLL;
+            if (acc < -0x3FFFFFFFLL) acc = -0x3FFFFFFFLL;
+
+            Qd[r][c] = (int32_t)acc;
         }
     }
 }
@@ -707,7 +767,8 @@ static void normalize_quat_q15(int16_t q[4]){
     for (int i=0;i<4;i++){
         float x = qf[i]/n;
         int32_t t = (int32_t)(x * 32767.0f + (x>=0?0.5f:-0.5f));
-        q[i] = sat_q15(t);
+//        q[i] = sat_q15(t);
+        q[i] = CLAMP_INT32_TO_INT16(t);
     }
 }
 
@@ -733,10 +794,11 @@ static void normalize_quat_q15(int16_t q[4]){
 static void small_angle_quat_q15(const int16_t dth[3], int16_t dq[4]){
     // 0.5 in Q15 ~ 16384
     dq[0] = Q15_ONE;
-    dq[1] = sat_q15( ((int32_t)dth[0] * 16384 + (dth[0]>=0? (1<<14):-(1<<14))) >> 15 );
-    dq[2] = sat_q15( ((int32_t)dth[1] * 16384 + (dth[1]>=0? (1<<14):-(1<<14))) >> 15 );
-    dq[3] = sat_q15( ((int32_t)dth[2] * 16384 + (dth[2]>=0? (1<<14):-(1<<14))) >> 15 );
-    normalize_quat_q15(dq);
+    dq[1] = CLAMP_INT32_TO_INT16( ((int32_t)dth[0] * 16384 + (dth[0]>=0? (1<<14):-(1<<14))) >> 15 );
+    dq[2] = CLAMP_INT32_TO_INT16( ((int32_t)dth[1] * 16384 + (dth[1]>=0? (1<<14):-(1<<14))) >> 15 );
+    dq[3] = CLAMP_INT32_TO_INT16( ((int32_t)dth[2] * 16384 + (dth[2]>=0? (1<<14):-(1<<14))) >> 15 );
+//    normalize_quat_q15(dq);
+    NormalizeQuaternionQ15(dq, dq);
 }
 
 /* ---------- Hauptupdate ---------- */

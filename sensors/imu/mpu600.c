@@ -122,6 +122,7 @@ static void LED_heartbeat_fast(void){
 
 uint8_t calculate_offset_values_imu(void){
 	uint32_t dummy_counter = 0;
+	if(OFFSET_CALIB_IMU == OFF) return 1;
 	if (calculate_offset_values(&imu_offset)){
 		return 1;
 	}else{
@@ -223,6 +224,10 @@ void MPU6000_Get_data_IT(sensor_fusion * pHandler_sf){
 	accel.y  = pHandler_sf->acc_t.y = (int16_t)(imu_data[2] << 8 | imu_data[3]) - imu_offset.acc.y;
 	accel.z  = pHandler_sf->acc_t.z = (int16_t)(imu_data[4] << 8 | imu_data[5]) - imu_offset.acc.z;
 
+	pHandler_sf->acc_raw_t.x = (int16_t)(imu_data[0] << 8 | imu_data[1]);
+	pHandler_sf->acc_raw_t.y = (int16_t)(imu_data[2] << 8 | imu_data[3]);
+	pHandler_sf->acc_raw_t.z = (int16_t)(imu_data[4] << 8 | imu_data[5]);
+
 //	gyro.x  = pHandler_sf->gyro_t.x = (int16_t)(imu_data[8] << 8 | imu_data[9]) - imu_offset.gyro.x;
 	x = (int16_t)(imu_data[8] << 8 | imu_data[9]) - imu_offset.gyro.x;
 	gyro.x  = pHandler_sf->gyro_t.x = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(((int32_t)x * (int32_t)gyro_scale_K_Q14.x)));
@@ -233,9 +238,9 @@ void MPU6000_Get_data_IT(sensor_fusion * pHandler_sf){
 	x = (int16_t)(imu_data[12] << 8 | imu_data[13]) - imu_offset.gyro.z;
 	gyro.z  = pHandler_sf->gyro_t.z = CLAMP_INT32_TO_INT16(Q14_SHIFT_ROUND(((int32_t)x * (int32_t)gyro_scale_K_Q14.z)));
 
-	gyro_raw.x = (int16_t)(imu_data[8] << 8 | imu_data[9]);
-	gyro_raw.y = (int16_t)(imu_data[10] << 8 | imu_data[11]);
-	gyro_raw.z = (int16_t)(imu_data[12] << 8 | imu_data[13]);
+	gyro_raw.x = pHandler_sf->gyro_raw_t.x = (int16_t)(imu_data[8] << 8 | imu_data[9]);
+	gyro_raw.y = pHandler_sf->gyro_raw_t.y =(int16_t)(imu_data[10] << 8 | imu_data[11]);
+	gyro_raw.z = pHandler_sf->gyro_raw_t.z =(int16_t)(imu_data[12] << 8 | imu_data[13]);
 	__enable_irq();
 }
 

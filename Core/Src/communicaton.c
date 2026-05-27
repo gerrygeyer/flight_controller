@@ -14,6 +14,7 @@
 #include "bno085.h"       // für BNO085_UART_DMA_RXCallback
 #include <settings.h>
 #include <Optical_flow/mtf02_rx.h>
+#include <attitude_control.h>
 
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
@@ -110,12 +111,14 @@ uint16_t get_battery_voltage_from_ESC(void){
 	return (rec_m1.battery_voltage);
 }
 
-uint8_t run_motors(motor_t * pHandle){
+uint8_t run_motors(motor_t * pHandle,uint8_t reset){
+	Safty_function_Motor_RPM_output(pHandle,reset);
+	if(reset > 0) return OK;
 	uint8_t counter_fails = 0;
-	counter_fails += send_speed_status_M1(pHandle->m_1, pHandle->state_m_1);
-	counter_fails += send_speed_status_M2(pHandle->m_2, pHandle->state_m_2);
-	counter_fails += send_speed_status_M3(pHandle->m_3, pHandle->state_m_3);
-	counter_fails += send_speed_status_M4(pHandle->m_4, pHandle->state_m_4);
+	counter_fails += send_speed_status_M1((MOTOR1_DIRECT_OF_ROT * pHandle->m_1), pHandle->state_m_1);
+	counter_fails += send_speed_status_M2((MOTOR2_DIRECT_OF_ROT * pHandle->m_2), pHandle->state_m_2);
+	counter_fails += send_speed_status_M3((MOTOR3_DIRECT_OF_ROT * pHandle->m_3), pHandle->state_m_3);
+	counter_fails += send_speed_status_M4((MOTOR4_DIRECT_OF_ROT * pHandle->m_4), pHandle->state_m_4);
 
 	switch (counter_fails){
 	case 0:

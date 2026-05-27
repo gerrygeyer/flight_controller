@@ -37,11 +37,6 @@ volatile bool log_data_flag;
 static FIL file;
 
 
-//static UINT bytesWritten;
-
-//static uint8_t logBuffer[LOG_BUFFER_SIZE];
-//static uint16_t logIndex = 0;
-//static bool logReady = false;
 
 static char ring_buffer[LOG_RING_SIZE];
 static volatile uint16_t ring_head = 0;
@@ -76,16 +71,6 @@ bool Log_WriteBuffered(const char* s) {
     }
     return true;
 }
-//void Log_WriteBuffered(const char* data)
-//{
-//    uint16_t len = strlen(data);
-//    for (uint16_t i = 0; i < len; i++) {
-//        uint16_t next = (ring_head + 1) % LOG_RING_SIZE;
-//        if (next == ring_tail) break;
-//        ring_buffer[ring_head] = data[i];
-//        ring_head = next;
-//    }
-//}
 
 
 
@@ -133,57 +118,7 @@ void Log_ProcessBuffered(void)
     }
 }
 
-//void Log_ProcessBuffered(void)
-//{
-//    static uint32_t tick_counter = 0;
-//
-//    if (file.obj.fs == NULL) {
-//        // Dateiobjekt ist ungültig
-////        const char* msg = "Invalid file handle\r\n";
-////        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-//        return;
-//    }
-//
-//    uint16_t fill = (ring_head >= ring_tail)
-//                  ? (ring_head - ring_tail)
-//                  : (LOG_RING_SIZE - ring_tail + ring_head);
-//
-//    if (fill < LOG_WRITE_THRESHOLD && tick_counter < 50) {
-//        tick_counter++;
-//        return;
-//    }
-//
-//    tick_counter = 0;
-//
-//    while (ring_tail != ring_head) {
-//        uint16_t chunk_len = (ring_head >= ring_tail)
-//                           ? (ring_head - ring_tail)
-//                           : (LOG_RING_SIZE - ring_tail);
-//
-//        if (chunk_len == 0) break;
-//
-//        UINT written = 0;
-//        FRESULT res = f_write(&file, &ring_buffer[ring_tail], chunk_len, &written);
-//
-//        if (res != FR_OK || written == 0) {
-////            const char* msg = "f_write failed\r\n";
-////            HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-//            f_close(&file);
-//            return;
-//        }
-//
-//        ring_tail = (ring_tail + written) % LOG_RING_SIZE;
-//    }
-//
-//    f_sync(&file);
-//}
 
-//void Log_TickExample(void)
-//{
-//    char msg[64];
-//    snprintf(msg, sizeof(msg), "Tick: %lu\r\n", HAL_GetTick());
-//    Log_WriteBuffered(msg);
-//}
 
 bool Log_Init(void)
 {
@@ -210,6 +145,15 @@ bool Log_Init(void)
         return false;
 
 //    f_write(&file, "index,mag_x,mag_y,mag_z\r\n", strlen(header), &written);
+    // CSV-Header schreiben
+    const char *header =
+        "index,"
+        "gyro_x,gyro_y,gyro_z,"
+        "acc_x,acc_y,acc_z,"
+        "mag_x,mag_y,mag_z,mag_valid,"
+        "q_w,q_x,q_y,q_z\r\n";
+    UINT written;
+    f_write(&file, header, strlen(header), &written);
 
     return true;
 }
@@ -250,19 +194,43 @@ void set_log_data_flag(void)
 //        Log_GyroCSV(&sf->mag_t);  // ggf. später durch gyro ersetzen
 //    }
 //}
-void Log_IMUCSV(const xyz_16t *gyro, const xyz_16t *acc, const xyz_16t *mag, bool mag_valid)
-{
-    char msg[128];   // größer, da jetzt 10 Werte
-    snprintf(msg, sizeof(msg),
-             "%" PRIu32 ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r\n",
-             sample_counter,
-             gyro->x, gyro->y, gyro->z,
-             acc->x,  acc->y,  acc->z,
-             mag->x,  mag->y,  mag->z,
-             mag_valid ? 1 : 0);
-    Log_WriteBuffered(msg);
-    sample_counter++;
+//void Log_IMUCSV(const xyz_16t *gyro, const xyz_16t *acc, const xyz_16t *mag, bool mag_valid)
+//{
+//    char msg[128];   // größer, da jetzt 10 Werte
+//    snprintf(msg, sizeof(msg),
+//             "%" PRIu32 ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r\n",
+//             sample_counter,
+//             gyro->x, gyro->y, gyro->z,
+//             acc->x,  acc->y,  acc->z,
+//             mag->x,  mag->y,  mag->z,
+//             mag_valid ? 1 : 0);
+//    Log_WriteBuffered(msg);
+//    sample_counter++;
+//}
+
+void Log_IMUCSV(const xyz_16t *gyro, const xyz_16t *acc, const xyz_16t *mag, bool mag_valid, wxyz_16t *q){
+
+	char msg[160];   // größer, da jetzt 14 Werte
+	snprintf(msg, sizeof(msg),
+			 "%" PRIu32 ","
+			 "%d,%d,%d,"   // gyro
+			 "%d,%d,%d,"   // acc
+			 "%d,%d,%d,"   // mag
+			 "%d,"         // mag_valid
+			 "%d,%d,%d,%d" // quaternion
+			 "\r\n",
+			 sample_counter,
+			 gyro->x, gyro->y, gyro->z,
+			 acc->x,  acc->y,  acc->z,
+			 mag->x,  mag->y,  mag->z,
+			 mag_valid ? 1 : 0,
+			 q->w, q->x, q->y, q->z);
+
+	Log_WriteBuffered(msg);
+	sample_counter++;
+
 }
+
 
 void log_data_if_ready(void)
 {
@@ -270,7 +238,7 @@ void log_data_if_ready(void)
         log_data_flag = false;
 
         sensor_fusion *sf = read_sensorfusion_data();
-        Log_IMUCSV(&sf->gyro_t, &sf->acc_t, &sf->mag_t, sf->mag_updated);
+        Log_IMUCSV(&sf->gyro_raw_t, &sf->acc_raw_t, &sf->mag_t, sf->mag_updated, &sf->quaternion);
     }
 }
 

@@ -7,17 +7,22 @@
 #include <parameter.h>
 
 
-#define Q30_MUL(a,b)   ((int64_t)(a) * (int64_t)(b) >> 30)
+//#define Q30_MUL(a,b)   ((int64_t)(a) * (int64_t)(b) >> 30)
+#define MAX3(a,b,c) ((a) > (b) ? ((a) > (c) ? (a) : (c)) : ((b) > (c) ? (b) : (c)))
 
 #define SENSOR_FUSION_FREQ	1000 // Hz
 
 #define ACC_MAX_VALUE	16		// g
 #define GYRO_MAX_VALUE	2000 	// Degree / s
-#define GRAD2RAD_GYRO_MAX_Q15 	939 // (1/2000'°/s')* (2*pi/360°) -> Gyro * 938.7341; max output = 34,9 rad/s
+#define GRAD2RAD_GYRO_MAX_VALUE_Q15 	30039 //939 // (1/2000'°/s')* (2*pi/360°) -> Gyro * 938.7341; max output = 34,9 rad/s
 
 
 void axis_aligned_init(void);
-void axis_aligned_filter(sensor_fusion *pHandle_sf, const bool acc_on,const bool mag_on);
+void vqf_init(void);
+void mahony_filter_init(void);
+void axis_aligned_filter(sensor_fusion *pHandle_sf, int16_t *q_out,const bool acc_on,const bool mag_on);
+void vqf_filter(const sensor_fusion *pHandle_sf,int16_t *q_out, const bool mag_on, uint8_t reset);
+void mahony_filter(const sensor_fusion *pHandle_sf,int16_t *q_out, const bool mag_on, uint8_t reset);
 
 
 /**

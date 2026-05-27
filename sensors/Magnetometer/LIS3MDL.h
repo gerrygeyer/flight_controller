@@ -24,7 +24,7 @@ extern I2C_HandleTypeDef hi2c1;
 /**
  * @brief Initialisiert den LIS3MDL Magnetometer (I2C, DRDY auf INT)
  */
-void LIS3MDL_Init(void);
+HAL_StatusTypeDef LIS3MDL_Init(void);
 
 /**
  * @brief Liest die aktuellen Magnetfeldwerte (in gauss, roh) aus

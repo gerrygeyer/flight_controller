@@ -32,6 +32,7 @@ bool init_tasks = false;
 
 int16_t tauQ10;
 int16_t hight_mm_corrected;
+int16_t hight_zero_position;
 
 // used for Test function
 uint32_t control_signals_counter;
@@ -45,10 +46,13 @@ int16_t a_imu[3], w_imu[3];
 at_angl_t system_euler_angle;
 motor_signals_16t motor_seed_esc;
 
+uint8_t reset_position_control =1;
+
 // debug
 int16_t debug_tau_1, debug_tau_2, debug_tau_3;
 int16_t debug_speed_counter = 0;
 xyz_16t debug_w;
+int32_t debug_motor_speed_m1, debug_motor_speed_m2, debug_motor_speed_m3, debug_motor_speed_m4;
 float euler_debug_ax_roll, euler_debug_ax_pitch,euler_debug_ax_yaw;
 
 at_angl_f debug_ref_euler, debug_sys_euler;
@@ -60,17 +64,23 @@ static void sysetem_ready_check(bool *flag, const int16_t *q);
 static void get_control_quaternion_from_euler_command(at_control_f euler, int16_t *q_ref);
 static void read_DMA_buffer(void);
 static int16_t get_r33_from_quaternion(const int16_t *q);
+static void init_SAFETY_FUNCTION(void);
 static void SAFETY_function_tasks(void);
 
 void task_init(void){
 
 	tauQ10 = 0;
+	hight_zero_position = 0;
+	reset_position_control = 1;
 
 	// ONLY 'SYSTEM_STOP' ARE ALLOWED IF BATTERY ARE CONNECTED
 
 //	system_state = SYSTEM_INIT;
-//	system_state = SYSTEM_START;
-	system_state = SYSTEM_STOP;
+//	if(DEBUG_MODE == ON){
+//		system_state = SYSTEM_START;
+//	}else{
+		system_state = SYSTEM_INIT;//SYSTEM_STOP;
+//	}
 
 	q_yaw_correction[0] = Q15;
 	q_yaw_correction[1] = 0;
@@ -93,6 +103,7 @@ void task_init(void){
 
 	init_motor();
 	init_position_control();
+	init_SAFETY_FUNCTION();
 	attitude_control_signals.T = 0;
 	attitude_control_signals.pitch = 0;
 	attitude_control_signals.roll = 0;
@@ -105,6 +116,7 @@ void task_init(void){
 	HAL_Delay(80);
 	init_sensors();
 	init_tasks = true;
+
 //
 //	int16_t test =  32767;
 //	int16_t angle_test = q15_acos(test);
@@ -131,7 +143,7 @@ void service_functions(void){
 
 void time_management(void){
 
-
+	start_time_measurement();
 	read_DMA_buffer();		//
 	if(init_tasks){
 
@@ -139,12 +151,13 @@ void time_management(void){
 	middle_speed_task();	// position control
 	highspeed_task();		// attitude control
 	SAFETY_function_tasks();// safty functions
+	stopp_time_measurement();
 	}
 //	Tick_500Hz_Handler(&optical_flow);
 
 }
 wxyz_16t q_filter,q_debug_yaw;
-int16_t angle_from_encoder_Q15;
+int16_t angle_from_encoder_Q15;debug_yaw_estimation;
 /**
  * @brief		Highspeed Task
  *
@@ -163,9 +176,16 @@ static void highspeed_task(void){
 	static bool system_ready = 0;
 	// debug
 	int16_t euler[3];
-	angle_from_encoder_Q15 = (int16_t)((int16_t)read_encoder_value());
+
 
 	get_quaternion_Q15(q, w,a);
+
+	if(TEST_STATION_ENCODER == ON){
+		angle_from_encoder_Q15 = (int16_t)((int16_t)read_encoder_value());
+
+	}
+
+
 
 	debug_w.x = w[0];
 	debug_w.y = w[1];
@@ -174,17 +194,21 @@ static void highspeed_task(void){
 	a_imu[0] = a[0];	a_imu[1] = a[1];	a_imu[2] = a[2];
 	w_imu[0] = w[0];	w_imu[1] = w[1];	w_imu[2] = w[2];
 
-	if(!init_yaw_sucsess){
-		if(init_yaw_counter++ > YAW_OFFSET_TIME){
-			create_init_yaw_quaternion(q_yaw);
-			init_yaw_sucsess = 1;
-			q_debug_yaw.w = q_yaw[0];	q_debug_yaw.x = q_yaw[1]; q_debug_yaw.y = q_yaw[2]; q_debug_yaw.z = q_yaw[3];
+	if(SET_YAW_TO_ZERO == ON){
+		if(!init_yaw_sucsess){
+			if(init_yaw_counter++ > YAW_OFFSET_TIME){
+				create_init_yaw_quaternion(q_yaw);
+				init_yaw_sucsess = 1;
+				q_debug_yaw.w = q_yaw[0];	q_debug_yaw.x = q_yaw[1]; q_debug_yaw.y = q_yaw[2]; q_debug_yaw.z = q_yaw[3];
+			}
 		}
+		multiplicateQuaternionQ15(q_yaw, q, q);
+//		multiplicateQuaternionQ15(q, q_yaw, q);
 	}
-	multiplicateQuaternionQ15(q_yaw, q, q);
 	if(POSTFILTER_ATT){
 		filter_SLERP_EMA_quaternion_Q15(q, q);
 	}
+
 
 	system_r33 = get_r33_from_quaternion(q);
 //	if(q[0]<0){
@@ -198,6 +222,11 @@ static void highspeed_task(void){
 	q_filter.y = q[2];
 	q_filter.z = q[3];
 //	correct_q_axis(q,w);
+	int16_t euler_yaw[3];
+
+	quat_to_euler_q15(q_yaw, euler_yaw);
+	debug_yaw_estimation = euler_yaw[2];
+
 
 	quat_to_euler_q15(q, euler);
 	system_euler_angle.roll = euler[0];// * 180.0f / (float)Q15;
@@ -213,34 +242,58 @@ static void highspeed_task(void){
 
 	switch(system_state){
 
+	/*
+	 * SYSTEM_INIT:	Set the inital measurement of the optical flow as the offset
+	 * 				for the drone. Max Time are 2 sec. after 2 Second the
+	 * 				optical flow cant give a good measurement the init hight are 0;
+	 */
 	case SYSTEM_INIT:
-		static uint16_t init_state_counter = 0;
-		static uint8_t offset_imu = 0;
+		static uint16_t wait_for_optical_flow_counter = 0;
+		reset_position_control = 1;
+		if(COMMUNICATION_OPT_FLW == ON){
+			if(optical_flow.distance_mm > 0){
+				hight_zero_position = optical_flow.distance_mm;
+				system_state = SYSTEM_STOP;
+				wait_for_optical_flow_counter = 0;
+			}else{
+				if(wait_for_optical_flow_counter++ > (2*IMU_FREQUENCY)){ // wait 2 sec
+					hight_zero_position = 0;
+					system_state = SYSTEM_STOP;
+					wait_for_optical_flow_counter = 0;
+				}
+			}
 
-		if(offset_imu == 0){
-			offset_imu = calculate_offset_values_imu();
 		}
-		ramp_speed = 0;
+
+		create_init_yaw_quaternion(q_yaw);
+
+
 		stop_flag = OFF;
 		break;
-
+/*
+ * SYSTEM_STOP:	Send the Stop command to Motor 1-4. For more safty we make it only once, than stop sending
+ * 				commands, so the internally Safty switch of the motor are activate and we are shure that the
+ * 				motor dont move anymore.
+ */
 	case SYSTEM_STOP:
+		reset_position_control = 1;
+		motor.m_1 = 0;
+		motor.m_2 = 0;
+		motor.m_3 = 0;
+		motor.m_4 = 0;
 
+		motor.state_m_1 = MOTOR_STOPP;
+		motor.state_m_2 = MOTOR_STOPP;
+		motor.state_m_3 = MOTOR_STOPP;
+		motor.state_m_4 = MOTOR_STOPP;
+		set_postion_control_stats_to_zero();
 		if(stop_flag == OFF){
+
 			stop_flag = ON;
 
-			motor.m_1 = 0;
-			motor.m_2 = 0;
-			motor.m_3 = 0;
-			motor.m_4 = 0;
 
-			motor.state_m_1 = MOTOR_STOPP;
-			motor.state_m_2 = MOTOR_STOPP;
-			motor.state_m_3 = MOTOR_STOPP;
-			motor.state_m_4 = MOTOR_STOPP;
-			set_postion_control_stats_to_zero();
 			// send the speed command to M1 - M4
-			if(run_motors(&motor) != OK){
+			if(run_motors(&motor,1) != OK){
 				// error
 			}
 		}
@@ -249,13 +302,34 @@ static void highspeed_task(void){
 		ramp_speed = 0;
 
 	break;
+
+	case TEST_MOTOR:
+
+		motor.m_1 = 1000;
+		motor.m_2 = 1000;
+		motor.m_3 = 1000;
+		motor.m_4 = 1000;
+
+		motor.state_m_1 = MOTOR_START;
+		motor.state_m_2 = MOTOR_START;
+		motor.state_m_3 = MOTOR_START;
+		motor.state_m_4 = MOTOR_START;
+
+		if(run_motors(&motor,0) != OK){
+			// error
+		}
+
+	break;
+	/*
+	 * SYSTEM_RAMP:	increase the motor Speed in one ramp function.
+	 * 				The values 3000 and 8 proved to be good in tests.
+	 */
 	case SYSTEM_RAMP:
 		stop_flag = OFF;
-
-
+		reset_position_control = 0;
 
 		motor.m_1 = ramp_speed;
-		motor.m_2 = -ramp_speed;
+		motor.m_2 = ramp_speed;
 		motor.m_3 = ramp_speed;
 		motor.m_4 = ramp_speed;
 
@@ -265,7 +339,7 @@ static void highspeed_task(void){
 		motor.state_m_4 = MOTOR_START;
 
 		// send the speed command to M1 - M4
-		if(run_motors(&motor) != OK){
+		if(run_motors(&motor,0) != OK){
 			// error
 		}
 
@@ -275,13 +349,17 @@ static void highspeed_task(void){
 			ramp_speed += 8;
 		}else{
 			system_state = SYSTEM_START;
+			if(SET_YAW_TO_ZERO == ON) twist_z_axis(q, q_yaw);
 		}
+
+//		create_init_yaw_quaternion(q_yaw);
+		init_yaw_sucsess = 1;
+		q_debug_yaw.w = q_yaw[0];	q_debug_yaw.x = q_yaw[1]; q_debug_yaw.y = q_yaw[2]; q_debug_yaw.z = q_yaw[3];
 
 	break;
 	case SYSTEM_START:
 		stop_flag = OFF;
-		read_distance_sensor();
-		read_orientation();
+		reset_position_control = 0;
 
 
 		switch (control_flag){
@@ -296,20 +374,27 @@ static void highspeed_task(void){
 
 		get_control_quaternion_from_euler_command(attitude_control_signals,q_att_ref);
 
-		system_q_ref.w = q_att_ref[0];	system_q_ref.x = q_att_ref[1];
-		system_q_ref.y = q_att_ref[2];	system_q_ref.z = q_att_ref[3];
+		if(POSITION_CONTROL == OFF){
+			system_q_ref.w = q_att_ref[0];	system_q_ref.x = q_att_ref[1];
+			system_q_ref.y = q_att_ref[2];	system_q_ref.z = q_att_ref[3];
+		}else{
+			q_att_ref[0] = system_q_ref.w;	q_att_ref[1] = system_q_ref.x;
+			q_att_ref[2] = system_q_ref.y;	q_att_ref[3] = system_q_ref.z;
+		}
+
 
 		// only debug/control:
 		int16_t euler_ref_debug[3], euler_sys_debug[3];
 		quat_to_euler_q15(q_att_ref,euler_ref_debug);
-		debug_ref_euler.pitch = (float)euler_ref_debug[0] * 360.0f / (float)Q15;
-		debug_ref_euler.roll = (float)euler_ref_debug[1] * 360.0f / (float)Q15;
-		debug_ref_euler.yaw = (float)euler_ref_debug[2] * 360.0f / (float)Q15;
+		debug_ref_euler.pitch = (float)euler_ref_debug[0]; //* 360.0f / (float)Q15;
+		debug_ref_euler.roll = (float)euler_ref_debug[1]; //* 360.0f / (float)Q15;
+		debug_ref_euler.yaw = (float)euler_ref_debug[2]; // * 360.0f / (float)Q15;
 
 		quat_to_euler_q15(q,euler_sys_debug);
-		debug_sys_euler.pitch = (float)euler_sys_debug[0] * 360.0f / (float)Q15;
-		debug_sys_euler.roll = (float)euler_sys_debug[1] * 360.0f / (float)Q15;
-		debug_sys_euler.yaw = (float)euler_sys_debug[2] * 360.0f / (float)Q15;
+		debug_sys_euler.pitch = (float)euler_sys_debug[0]; // * 360.0f / (float)Q15;
+		debug_sys_euler.roll = (float)euler_sys_debug[1]; // * 360.0f / (float)Q15;
+		debug_sys_euler.yaw = (float)euler_sys_debug[2]; // * 360.0f / (float)Q15;
+
 
 		switch (ATTITUDE_CONTROL){
 		case ATT_LQR_CONTROL:
@@ -321,21 +406,24 @@ static void highspeed_task(void){
 		default:
 			system_state = SYSTEM_STOP;
 		}
-//
+
 
 
 		debug_tau_1 = tau[0]; // debug
 		debug_tau_2 = tau[1];	// debug
 		debug_tau_3 = tau[2]; // devug
 
-		u[0] = 0;
+		u[0] = tauQ10;
 		u[1] = tau[0];
 		u[2] = tau[1];
 		u[3] = tau[2];
 
 		transform_u2_motorSpeed(u,&motor);
 
-
+		debug_motor_speed_m1 = motor.m_1;
+		debug_motor_speed_m2 = motor.m_2;
+		debug_motor_speed_m3 = motor.m_3;
+		debug_motor_speed_m4 = motor.m_4;
 
 		motor.state_m_1 = MOTOR_START;
 		motor.state_m_2 = MOTOR_START;
@@ -343,7 +431,7 @@ static void highspeed_task(void){
 		motor.state_m_4 = MOTOR_START;
 
 		// send the speed command to M1 - M4
-		if(run_motors(&motor) != OK){
+		if(run_motors(&motor,0) != OK){
 			// error
 		}
 		ramp_speed = 0;
@@ -362,7 +450,7 @@ static void highspeed_task(void){
 		motor.state_m_4 = MOTOR_STOPP;
 		set_postion_control_stats_to_zero();
 		// send the speed command to M1 - M4
-		if(run_motors(&motor) != OK){
+		if(run_motors(&motor,1) != OK){
 			// error
 		}
 		clear_control_functions();
@@ -374,28 +462,6 @@ static void highspeed_task(void){
 	system_q.x = q[1];
 	system_q.y = q[2];
 	system_q.z = q[3];
-
-}
-
-int16_t gyro_real;
-static void middle_speed_task(void){
-	static uint8_t middle_speed_counter = 0;
-	static uint16_t pos_timeout_counter = 0;
-	int16_t x_ref[6] = {0};
-
-	if(middle_speed_counter++ < POS_FREQ_DIV) return;
-	middle_speed_counter = 0;
-	if(pos_timeout_counter++ < 300) return; // wait 3 sec; and let the sensor fusion correct the position
-
-	// ######### START MIDDLE SPEED ##########
-
-	gyro_real = read_encoder_rotational_speed(100);
-
-	if(POSITION_CONTROL == OFF) return;
-	position_control(x_ref,&system_q, &system_q_ref,a_imu,w_imu, &optical_flow, &tauQ10, &hight_mm_corrected);
-
-
-//	integrate_a_to_v
 
 }
 
@@ -421,6 +487,7 @@ at_control_f create_attitude_control_signals(void){
 		x /= TIME_PERIOD;
 
 		const float angle_degree = 15.0f;
+		const float angle_degree_combined = 10.0f;
 
 		switch (x){
 
@@ -456,7 +523,7 @@ at_control_f create_attitude_control_signals(void){
 		case TIME_6:
 			Output.pitch = 0.0;
 			Output.roll = 0.0;
-			Output.yaw = angle_degree;
+			Output.yaw = angle_degree + 10.0f;
 			break;
 		case TIME_7:
 			Output.pitch = 0.0;
@@ -464,9 +531,9 @@ at_control_f create_attitude_control_signals(void){
 			Output.yaw = 0.0;
 			break;
 		case TIME_8:
-			Output.pitch = angle_degree/2.0f;//15.0f;
-			Output.roll = angle_degree/2.0f;//15.0f;
-			Output.yaw = angle_degree/2.0f;//15.0f;
+			Output.pitch = angle_degree_combined; //angle_degree/2.0f;//15.0f;
+			Output.roll = angle_degree_combined; // angle_degree/2.0f;//15.0f;
+			Output.yaw = angle_degree_combined; //angle_degree/2.0f;//15.0f;
 			break;
 		case TIME_9:
 			Output.pitch = 0.0;
@@ -491,25 +558,25 @@ at_control_f create_attitude_control_signals(void){
 
 			case TIME_1:
 			case TIME_2:
-				Output.pitch = (0.02f*control_signals_counter);
+				Output.pitch = (0.02f*(control_signals_counter/5));
 				Output.roll = 0.0;
 				Output.yaw = 0.0;
 				break;
 
 			case TIME_3:
-				Output.pitch = 20.0f-(0.02f*(control_signals_counter-1000));
+				Output.pitch = 20.0f-(0.02f*((control_signals_counter/5)-1000));
 				Output.roll = 0.0;
 				Output.yaw = 0.0;
 				break;
 
 			case TIME_4:
-				Output.pitch = 10.0f+(0.02f*(control_signals_counter-1500));
+				Output.pitch = 10.0f+(0.02f*((control_signals_counter/5)-1500));
 				Output.roll = 0.0;
 				Output.yaw = 0.0;
 				break;
 			case TIME_5:
 			case TIME_6:
-				Output.pitch = 20.0f-(0.02*(control_signals_counter-2000));
+				Output.pitch = 20.0f-(0.02*((control_signals_counter/5)-2000));
 				Output.roll = 0.0f;
 				Output.yaw = 0.0;
 				break;
@@ -521,24 +588,24 @@ at_control_f create_attitude_control_signals(void){
 			case TIME_8:
 			case TIME_9:
 				Output.pitch = 0.0f;
-				Output.roll = (0.02f*(control_signals_counter-3500));
+				Output.roll = (0.02f*((control_signals_counter/5)-3500));
 				Output.yaw = 0.0f;
 				break;
 			case TIME_10:
 				Output.pitch = 0.0;
-				Output.roll = 20.0f-(0.02f*(control_signals_counter-4500));
+				Output.roll = 20.0f-(0.02f*((control_signals_counter/5)-4500));
 				Output.yaw = 0.0;
 				break;
 			case TIME_11:
 				Output.pitch = 0.0;
-				Output.roll = 10.0f+(0.02f*(control_signals_counter-5000));
+				Output.roll = 10.0f+(0.02f*((control_signals_counter/5)-5000));
 				Output.yaw = 0.0;
 				break;
 
 			case TIME_12:
 			case TIME_13:
 				Output.pitch = 0.0f;
-				Output.roll = 20.0f-(0.02*(control_signals_counter-5500));
+				Output.roll = 20.0f-(0.02*(control_signals_counter/5)-5500);
 				Output.yaw = 0.0;
 				break;
 			case TIME_14:
@@ -662,6 +729,14 @@ at_control_f create_attitude_control_signals(void){
 
 }
 
+uint16_t get_hight_of_drone_cm_irq_save(void){
+	uint16_t Output;
+	__disable_irq();
+	Output = (uint16_t)CLAMP(((int32_t)optical_flow.distance_mm/10 - hight_zero_position),0,Q15);
+	__enable_irq();
+	return (Output);
+}
+
 static void get_control_quaternion_from_euler_command(at_control_f euler, int16_t *q_ref){
 	int32_t roll, pitch, yaw;
 	roll = CLAMP_INT32_TO_INT16((int32_t)(euler.roll * (float)Q15 / 360.0f));
@@ -701,20 +776,25 @@ static void sysetem_ready_check(bool *flag, const int16_t *q){
 	if(!flag){
 		int32_t x = (uint16_t)q[0] + (uint16_t)q[1] + (uint16_t)q[2] + (uint16_t)q[3];
 		if(x > Q14){
-			flag = 1;
+			*flag = 1;
 		}
 	}
 
 }
-
+int16_t optical_flow_raw_x, optical_flow_raw_y;
 static void read_DMA_buffer(void){
 	if(MTF01_GetFrame(&optical_flow)){
 //		uint8_t test =0;
 
 		if(OPTICAL_FLOW_ROTATE){
 			optical_flow.flow_vel_x = -optical_flow.flow_vel_x;
-			optical_flow.flow_vel_y = -optical_flow.flow_vel_y;
+//			optical_flow.flow_vel_y = optical_flow.flow_vel_y;
 		}
+		int16_t vel_dummy[2];
+		optical_flow_raw_x = optical_flow.flow_vel_x; optical_flow_raw_y =optical_flow.flow_vel_y;
+		vel_dummy[0] = optical_flow.flow_vel_x;	vel_dummy[1] = optical_flow.flow_vel_y;
+		position_median_filter_speed_xy_f(vel_dummy);
+		optical_flow.flow_vel_x = vel_dummy[0];	optical_flow.flow_vel_y = vel_dummy[1];
 	}
 }
 
@@ -727,8 +807,12 @@ static int16_t get_r33_from_quaternion(const int16_t *q){
 	return CLAMP_INT32_TO_INT16(x);
 }
 
+int16_t max_inclination, max_inclination_ground;
 static void init_SAFETY_FUNCTION(void){
-	// wow, so much init
+	int16_t angle_q15 = CLAMP_INT32_TO_INT16(SAFE_MAX_INCLINATION * (float)Q15 / 180.0f);
+	max_inclination = cos_Q15(angle_q15);
+	angle_q15 = CLAMP_INT32_TO_INT16(SAFE_MAX_INCLI_GROUND * (float)Q15 / 180.0f);
+	max_inclination_ground = cos_Q15(angle_q15);
 }
 
 // ############# SAFTY FUNCTIONS
@@ -755,8 +839,8 @@ static void SAFETY_START_functon(void){
 
 
 
-		const int16_t max_inclination = 25102; // ~40° r33 = cos(\theta)
-		if((r33_memory[0] < max_inclination) && (r33_memory[1] < max_inclination) && (r33_memory[2] < max_inclination)){
+		//const int16_t max_inclination = 25102; // ~40° r33 = cos(\theta)
+		if((r33_memory[0] < max_inclination_ground) && (r33_memory[1] < max_inclination_ground) && (r33_memory[2] < max_inclination_ground)){
 			system_stop_function();
 		}
 
@@ -770,13 +854,13 @@ static void SAFETY_START_functon(void){
 
 }
 
-// During flight, an inclination of more than 85° is not permitted.
+// During flight, an inclination of more than 50° is not permitted.
 static void SAFTETY_FLY_function(void){
 	static int16_t r33_memory[3] = {0};
 	r33_memory[2] = r33_memory[1]; r33_memory[1] = r33_memory[0];
 	r33_memory[0] = system_r33;
 
-	const int16_t max_inclination = 2856; // ~85° r33 = cos(\theta)
+	const int16_t max_inclination = 21063; // ~85° r33 = cos(\theta)
 	if((r33_memory[0] < max_inclination) && (r33_memory[1] < max_inclination) && (r33_memory[2] < max_inclination)){
 		system_stop_function();
 	}
@@ -786,5 +870,45 @@ static void SAFETY_function_tasks(void){
 	if(SAFTY_GROUND_LIMITATION == OFF) return;
 	SAFETY_START_functon();
 	SAFTETY_FLY_function();
+}
+
+
+int16_t gyro_real;
+uint8_t test_position_flag = 0;
+uint8_t start_position_control = 0;
+static void middle_speed_task(void){
+	static uint8_t middle_speed_counter = 0;
+	static uint16_t pos_timeout_counter = 0;
+	static int16_t x_ref[6] = {0,0,80,0,0,0};
+	/* pos ref= [x_pos, y_pos, z_pos, x_speed, y_speed, z_speed]
+	 * unit for pos are in cm, unit for speed, are cm/s
+	 */
+
+	if(middle_speed_counter++ < POS_FREQ_DIV) return;
+	middle_speed_counter = 0;
+	if(pos_timeout_counter++ < 300) return; // wait 3 sec; and let the sensor fusion correct the position
+
+	// ######### START MIDDLE SPEED ##########
+
+	if(TEST_STATION_ENCODER == ON) gyro_real = read_encoder_rotational_speed(100);
+	if(POSITION_CONTROL == OFF) return;
+
+	if(test_position_flag >0){
+		test_position_flag = 0;
+		x_ref[0] = 30;	x_ref[1] = 30;	x_ref[2] = 130;
+		x_ref[3] = 0;	x_ref[4] = 0;	x_ref[5] = 0;
+	}
+//	if(start_position_control > 0){
+
+		position_control(x_ref,&system_q, &system_q_ref,a_imu,w_imu, &optical_flow, &tauQ10, &hight_mm_corrected,reset_position_control);
+
+//	}else{
+//		position_control(x_ref,&system_q, &system_q_ref,a_imu,w_imu, &optical_flow, &tauQ10, &hight_mm_corrected,1);
+//		system_q_ref.w = Q15; system_q_ref.x = 0; system_q_ref.y = 0; system_q_ref.z = 0;
+//	}
+//	position_control(x_ref,&system_q, &system_q_ref,a_imu,w_imu, &optical_flow, &tauQ10, &hight_mm_corrected,reset_position_control);
+
+//	integrate_a_to_v
+
 }
 
